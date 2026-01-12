@@ -1,0 +1,8 @@
+# Md files
+question.md
+
+# Runner files
+*.sh
+
+# System files
+.vscode
