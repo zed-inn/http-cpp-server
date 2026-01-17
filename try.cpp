@@ -12,7 +12,7 @@ using namespace std;
 int main()
 {
     int status;
-    struct addrinfo hints, *p;
+    struct addrinfo hints, *p = nullptr;
     struct addrinfo *servinfo = nullptr;
 
     memset(&hints, 0, sizeof hints);
