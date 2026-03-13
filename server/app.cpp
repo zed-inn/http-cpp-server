@@ -31,47 +31,69 @@ int main()
         }
     }
 
-    // get working p attached to socket file descriptor
+    // get working p attach to socket file descriptor
     {
         for (p = servinfo; p != nullptr; p = p->ai_next)
         {
-            sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-            if (sockfd != -1)
-                break;
+            char ipstr[INET6_ADDRSTRLEN];
+            struct sockaddr_in *ipv4;
+            struct sockaddr_in6 *ipv6;
+            const char *ipver;
+            void *addr = nullptr;
+
+            if (p->ai_family == AF_INET)
+            {
+                ipv4 = (struct sockaddr_in *)p->ai_addr;
+                addr = &(ipv4->sin_addr);
+                ipver = "IPv4";
+            }
+            else if (p->ai_family == AF_INET6)
+            {
+                ipv6 = (struct sockaddr_in6 *)p->ai_addr;
+                addr = &(ipv6->sin6_addr);
+                ipver = "IPv6";
+            }
+            else
+                continue;
+
+            inet_ntop(p->ai_family, addr, ipstr, INET6_ADDRSTRLEN);
+            printf("%s %s\n", ipver, ipstr);
+
+            // sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+            // if (sockfd != -1)
+            //     break;
         }
-        if (p == nullptr)
-        {
-            printf("Err: No valid address to connect.");
-            exit(1);
-        }
+        // if (p == nullptr)
+        // {
+        //     printf("Err: No valid address to connect.");
+        //     exit(1);
+        // }
     }
 
-    // reuse the address if already in use error, but not connected as we know
-    reuse_addr(&sockfd);
+    // // reuse the address if already in use error, but not connected as we know
+    // reuse_addr(&sockfd);
 
-    // bind the socket fd to address
-    {
-        status = bind(sockfd, p->ai_addr, p->ai_addrlen);
-        int err_bind = errno;
-        if (status == -1)
-        {
-            fprintf(stderr, "Err: %s\n", strerror(err_bind));
-            exit(1);
-        }
-    }
+    // // bind the socket fd to address
+    // {
+    //     status = bind(sockfd, p->ai_addr, p->ai_addrlen);
+    //     int err_bind = errno;
+    //     if (status == -1)
+    //     {
+    //         fprintf(stderr, "Err: %s\n", strerror(err_bind));
+    //         exit(1);
+    //     }
+    // }
 
-    // listen on the socket after bind
-    {
-        status = listen(sockfd, APP_BACKLOG);
-        int err_listen = errno;
-        if (status == -1)
-        {
-            fprintf(stderr, "Err: %s\n", strerror(err_listen));
-            exit(1);
-        }
-    }
-
-    
+    // // listen on the socket after bind
+    // {
+    //     status = listen(sockfd, APP_BACKLOG);
+    //     int err_listen = errno;
+    //     if (status == -1)
+    //     {
+    //         fprintf(stderr, "Err: %s\n", strerror(err_listen));
+    //         exit(1);
+    //     }
+    // }
 
     freeaddrinfo(servinfo); // free at last the struct
 
