@@ -8,7 +8,7 @@
 #include "../utils/addr_reuse.h"
 #include "../utils/send_recv.h"
 
-using namespace std;
+#define BUFFER_SIZE 255
 
 int main()
 {
@@ -48,49 +48,25 @@ int main()
         }
     }
 
-    // reuse the address if already in use error, but not connected as we know
-    reuse_addr(&sockfd);
-
-    // bind the socket fd to address
+    // connect the socket fd to address
     {
-        status = bind(sockfd, p->ai_addr, p->ai_addrlen);
+        status = connect(sockfd, p->ai_addr, p->ai_addrlen);
         if (status == -1)
         {
             fprintf(stderr, "Err: %s\n", strerror(errno));
             exit(1);
         }
-        printf("Port binded.\n");
+        printf("Port connected.\n");
     }
 
-    // listen on the socket after bind
+    // Send and recv
     {
-        status = listen(sockfd, APP_BACKLOG);
-        if (status == -1)
-        {
-            fprintf(stderr, "Err: %s\n", strerror(errno));
-            exit(1);
-        }
-        printf("Listening on port %s\n", APP_PORT);
+        recvstr(sockfd);
+        recvstr(sockfd);
+        sendstr(sockfd, "sahi hu");
     }
 
-    // accept connections
-    int newfd;
-    {
-        struct sockaddr_storage incoming_addr;
-        socklen_t addr_size = sizeof(incoming_addr);
-
-        newfd = accept(sockfd, (struct sockaddr *)&incoming_addr, &addr_size);
-        printf("Connection accepted.\n");
-    }
-
-    // Send something
-    {
-        sendstr(newfd, "hello there");
-        sendstr(newfd, "or bhai kesa ahi?");
-        recvstr(newfd);
-    }
-
-    freeaddrinfo(servinfo); // free at last the struct
+    freeaddrinfo(servinfo);
 
     return 0;
 }
