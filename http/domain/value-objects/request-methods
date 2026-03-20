@@ -1,0 +1,83 @@
+#include <cctype>
+#include <cstring>
+
+#ifndef _C_HTTP_REQUEST_METHOD_
+#define _C_HTTP_REQUEST_METHOD_ 1
+
+// Defines http request method
+// GET | HEAD | POST | PUT | DELETE | CONNECT | OPTIONS | TRACE | PATCH
+typedef int HttpRequestMethodName;
+
+class HttpRequestMethod
+{
+private:
+    static constexpr char _GET[] = "GET";
+    static constexpr char _POST[] = "POST";
+    static constexpr char _HEAD[] = "HEAD";
+    static constexpr char _DELETE[] = "DELETE";
+    static constexpr char _PUT[] = "PUT";
+    static constexpr char _OPTIONS[] = "OPTIONS";
+    static constexpr char _TRACE[] = "TRACE";
+    static constexpr char _PATCH[] = "PATCH";
+    static constexpr char _CONNECT[] = "CONNECT";
+
+    static constexpr int MAX_METHOD_NAME_LENGTH = 8;
+
+    static constexpr HttpRequestMethodName
+    mapped(char *methodName)
+    {
+        if (strcmp(methodName, _GET) == 0)
+            return GET;
+        if (strcmp(methodName, _HEAD) == 0)
+            return HEAD;
+        if (strcmp(methodName, _POST) == 0)
+            return POST;
+        if (strcmp(methodName, _PUT) == 0)
+            return PUT;
+        if (strcmp(methodName, _DELETE) == 0)
+            return DELETE;
+        if (strcmp(methodName, _CONNECT) == 0)
+            return CONNECT;
+        if (strcmp(methodName, _OPTIONS) == 0)
+            return OPTIONS;
+        if (strcmp(methodName, _TRACE) == 0)
+            return TRACE;
+        if (strcmp(methodName, _PATCH) == 0)
+            return PATCH;
+
+        return INVALID;
+    }
+
+public:
+    static constexpr int INVALID = -1;
+    static constexpr int GET = 1;
+    static constexpr int HEAD = 2;
+    static constexpr int POST = 3;
+    static constexpr int PUT = 4;
+    static constexpr int DELETE = 5;
+    static constexpr int CONNECT = 6;
+    static constexpr int OPTIONS = 7;
+    static constexpr int TRACE = 8;
+    static constexpr int PATCH = 9;
+
+    // Function to convert a string / character array to its representing
+    // Http request method. Checks strictly to ensure the method name
+    // maps to the defined meaning
+    static HttpRequestMethodName
+    mapToMethod(const char *s)
+    {
+        char methodName[MAX_METHOD_NAME_LENGTH];
+        unsigned int l = 0;
+
+        while (l < MAX_METHOD_NAME_LENGTH && *s != '\0' && isalpha(*s))
+            methodName[l++] = toupper(*s++);
+        methodName[l] = '\0';
+
+        if (*s != '\0')
+            return INVALID;
+
+        return mapped(methodName);
+    }
+};
+
+#endif
