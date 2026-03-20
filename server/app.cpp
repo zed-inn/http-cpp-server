@@ -1,4 +1,5 @@
 #include <iostream>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -88,8 +89,10 @@ int main()
         sendstr(newfd, "hello there");
         sendstr(newfd, "or bhai kesa ahi?");
         recvstr(newfd);
+        recvstr(newfd);
     }
 
+    close(sockfd);
     freeaddrinfo(servinfo); // free at last the struct
 
     return 0;

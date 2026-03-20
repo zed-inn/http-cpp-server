@@ -2,6 +2,8 @@
 #include <sys/socket.h>
 #include <string.h>
 
+#define BUFFER_SIZE 1024
+
 int sendstr(int sockfd, const char *msg)
 {
     int bytessent;
@@ -19,14 +21,14 @@ int sendstr(int sockfd, const char *msg)
 int recvstr(int sockfd)
 {
     int bytesrecv;
-    char buffer[255];
+    char buffer[BUFFER_SIZE];
 
     bytesrecv = recv(sockfd, buffer, sizeof(buffer), 0);
     if (bytesrecv == 0)
     {
-        fprintf(stderr, "Err: %s\n", "Connection closed, on data recieved.");
+        fprintf(stderr, "Err: %s\n", "Connection closed, no data recieved.");
         return -1;
     }
-    printf("Data recieved [max: %d]: %s\n", sizeof(buffer), buffer);
+    printf("Data recieved [%d/%d]: %s\n", bytesrecv, sizeof(buffer), buffer);
     return bytesrecv;
 }

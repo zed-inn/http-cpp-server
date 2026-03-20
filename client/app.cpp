@@ -1,4 +1,5 @@
 #include <iostream>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -7,8 +8,6 @@
 #include "../constants/env.h"
 #include "../utils/addr_reuse.h"
 #include "../utils/send_recv.h"
-
-#define BUFFER_SIZE 255
 
 int main()
 {
@@ -66,6 +65,7 @@ int main()
         sendstr(sockfd, "sahi hu");
     }
 
+    close(sockfd);
     freeaddrinfo(servinfo);
 
     return 0;
