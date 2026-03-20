@@ -4,13 +4,13 @@
 #ifndef _C_HTTP_REQUEST_METHOD_
 #define _C_HTTP_REQUEST_METHOD_ 1
 
-// Defines http request method
-// GET | HEAD | POST | PUT | DELETE | CONNECT | OPTIONS | TRACE | PATCH
-typedef int HttpRequestMethodName;
-
 class HttpRequestMethod
 {
-private:
+public:
+    // Http Request Method Name
+    typedef int Name;
+
+protected:
     static constexpr char _GET[] = "GET";
     static constexpr char _POST[] = "POST";
     static constexpr char _HEAD[] = "HEAD";
@@ -23,7 +23,7 @@ private:
 
     static constexpr int MAX_METHOD_NAME_LENGTH = 8;
 
-    static constexpr HttpRequestMethodName
+    static constexpr Name
     mapped(char *methodName)
     {
         if (strcmp(methodName, _GET) == 0)
@@ -49,21 +49,21 @@ private:
     }
 
 public:
-    static constexpr HttpRequestMethodName INVALID = -1;
-    static constexpr HttpRequestMethodName GET = 1;
-    static constexpr HttpRequestMethodName HEAD = 2;
-    static constexpr HttpRequestMethodName POST = 3;
-    static constexpr HttpRequestMethodName PUT = 4;
-    static constexpr HttpRequestMethodName DELETE = 5;
-    static constexpr HttpRequestMethodName CONNECT = 6;
-    static constexpr HttpRequestMethodName OPTIONS = 7;
-    static constexpr HttpRequestMethodName TRACE = 8;
-    static constexpr HttpRequestMethodName PATCH = 9;
+    static constexpr Name INVALID = -1; // Invalid Method
+    static constexpr Name GET = 1;      // GET Method
+    static constexpr Name HEAD = 2;     // HEAD Method
+    static constexpr Name POST = 3;     // POST Method
+    static constexpr Name PUT = 4;      // PUT Method
+    static constexpr Name DELETE = 5;   // DELETE Method
+    static constexpr Name CONNECT = 6;  // CONNECT Method
+    static constexpr Name OPTIONS = 7;  // OPTIONS Method
+    static constexpr Name TRACE = 8;    // TRACE Method
+    static constexpr Name PATCH = 9;    // PATCH Method
 
     // Function to convert a string / character array to its representing
     // Http request method. Checks strictly to ensure the method name
     // maps to the defined meaning
-    static HttpRequestMethodName
+    static Name
     mapToMethod(const char *s)
     {
         char methodName[MAX_METHOD_NAME_LENGTH];
