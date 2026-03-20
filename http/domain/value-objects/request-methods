@@ -49,16 +49,16 @@ private:
     }
 
 public:
-    static constexpr int INVALID = -1;
-    static constexpr int GET = 1;
-    static constexpr int HEAD = 2;
-    static constexpr int POST = 3;
-    static constexpr int PUT = 4;
-    static constexpr int DELETE = 5;
-    static constexpr int CONNECT = 6;
-    static constexpr int OPTIONS = 7;
-    static constexpr int TRACE = 8;
-    static constexpr int PATCH = 9;
+    static constexpr HttpRequestMethodName INVALID = -1;
+    static constexpr HttpRequestMethodName GET = 1;
+    static constexpr HttpRequestMethodName HEAD = 2;
+    static constexpr HttpRequestMethodName POST = 3;
+    static constexpr HttpRequestMethodName PUT = 4;
+    static constexpr HttpRequestMethodName DELETE = 5;
+    static constexpr HttpRequestMethodName CONNECT = 6;
+    static constexpr HttpRequestMethodName OPTIONS = 7;
+    static constexpr HttpRequestMethodName TRACE = 8;
+    static constexpr HttpRequestMethodName PATCH = 9;
 
     // Function to convert a string / character array to its representing
     // Http request method. Checks strictly to ensure the method name
