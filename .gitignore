@@ -6,3 +6,6 @@ question.md
 
 # System files
 .vscode
+
+# Temporary files
+temp*
