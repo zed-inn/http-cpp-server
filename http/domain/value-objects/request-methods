@@ -10,17 +10,6 @@ public:
     // Http Request Method Name
     typedef char Name;
 
-    static constexpr Name INVALID = -1; // Invalid Method
-    static constexpr Name GET = 1;      // GET Method
-    static constexpr Name HEAD = 2;     // HEAD Method
-    static constexpr Name POST = 3;     // POST Method
-    static constexpr Name PUT = 4;      // PUT Method
-    static constexpr Name DELETE = 5;   // DELETE Method
-    static constexpr Name CONNECT = 6;  // CONNECT Method
-    static constexpr Name OPTIONS = 7;  // OPTIONS Method
-    static constexpr Name TRACE = 8;    // TRACE Method
-    static constexpr Name PATCH = 9;    // PATCH Method
-
 protected:
     static constexpr char _GET[] = "GET";
     static constexpr char _POST[] = "POST";
@@ -59,6 +48,18 @@ protected:
         return INVALID;
     }
 
+public:
+    static constexpr Name INVALID = -1; // Invalid Method
+    static constexpr Name GET = 1;      // GET Method
+    static constexpr Name HEAD = 2;     // HEAD Method
+    static constexpr Name POST = 3;     // POST Method
+    static constexpr Name PUT = 4;      // PUT Method
+    static constexpr Name DELETE = 5;   // DELETE Method
+    static constexpr Name CONNECT = 6;  // CONNECT Method
+    static constexpr Name OPTIONS = 7;  // OPTIONS Method
+    static constexpr Name TRACE = 8;    // TRACE Method
+    static constexpr Name PATCH = 9;    // PATCH Method
+
     // Function to convert a string / character array to its representing
     // Http request method. Checks strictly to ensure the method name
     // maps to the defined meaning
@@ -76,51 +77,6 @@ protected:
             return INVALID;
 
         return mapped(methodName);
-    }
-
-    bool parseComplete = false;
-    bool parsePartial = false;
-    std::string parsedMethodName;
-    Name val = INVALID;
-
-public:
-    HttpRequestMethod()
-    {
-        parsedMethodName.reserve(MAX_METHOD_NAME_LENGTH + 1);
-    }
-
-    bool isFullyParsed() const
-    {
-        return parseComplete;
-    }
-
-    Name name()
-    {
-        return parseComplete ? val : INVALID;
-    }
-
-    char *parseMore(char *s)
-    {
-        if (parseComplete)
-            return s;
-
-        if (!parsePartial)
-            while (isspace(*s))
-                s++;
-
-        while (*s != '\0' && !isspace(*s) && parsedMethodName.length() < MAX_METHOD_NAME_LENGTH)
-            parsedMethodName += *s++;
-
-        if (isspace(*s) || parsedMethodName.length() >= MAX_METHOD_NAME_LENGTH)
-        {
-            parseComplete = true;
-            val = mapToMethod(&parsedMethodName.front());
-        }
-
-        if (parsedMethodName.length() > 0)
-            parsePartial = true;
-
-        return s;
     }
 };
 
