@@ -1,0 +1,128 @@
+#include <cctype>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+
+#ifndef _C_HTTP_TARGET_URI_
+#define _C_HTTP_TARGET_URI_ 1
+
+class HttpTargetUri
+{
+public:
+    typedef std::string_view Value;
+    typedef std::unordered_map<std::string, std::string> QueryParameters;
+
+private:
+    static constexpr size_t MAX_TARGET_URI_LENGTH = 2048;
+    static constexpr size_t FRONT_RESERVED_URI_SPACE = 64;
+
+    static constexpr size_t FRONT_RESERVED_QUERY_PARAMETER_SPACE = 64;
+    static constexpr size_t FRONT_RESERVED_QUERY_VALUE_SPACE = 64;
+
+    std::string uri;                 // String containing Uri Path
+    QueryParameters queryParameters; // Query parameters map
+
+    /// @brief Checks if a character is a valid character of a hex digit
+    /// @param c Arbitrary character
+    /// @return true if valid hex digit else false
+    static bool isValidHexChar(char c)
+    {
+        return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+    }
+
+    /// @brief Decode Uri String from Hex '%' formats and '+' characters
+    /// @param s String pointing to the uri encoded string
+    void decodeUriString(std::string *s)
+    {
+        std::string temp;
+        temp.reserve(2);
+        int charNum;
+        for (int i = 0; i < s->length(); i++)
+        {
+            if (s->at(i) == '+')
+                s->replace(i, 1, " ");
+            else if (s->at(i) == '%' && i + 2 < s->length() && isValidHexChar(s->at(i + 1)) && isValidHexChar(s->at(i + 2)))
+            {
+                temp.clear();
+                charNum = stoi(s->substr(i + 1, 2), nullptr, 16);
+                temp += charNum;
+                s->replace(i, 3, temp);
+            }
+        }
+    }
+
+    /// @brief Parse query parameters and stores them in the instance query parameters map
+    /// @param s String containing the query string of a uri after '?'
+    /// @param i Position the uri has been parsed till
+    void parseQueryParameters(const char *s, int i)
+    {
+        std::string queryParam, queryVal;
+        queryParam.reserve(FRONT_RESERVED_QUERY_PARAMETER_SPACE);
+        queryParam.reserve(FRONT_RESERVED_QUERY_VALUE_SPACE);
+
+        while (*s != '\0' && *s != '#' && !isspace(*s) && i < MAX_TARGET_URI_LENGTH)
+        {
+            // Clear param and val strings
+            queryParam.clear(), queryVal.clear();
+
+            // Write param
+            while (*s != '\0' && *s != '=' && *s != '&' && *s != '#' && !isspace(*s) && i < MAX_TARGET_URI_LENGTH)
+                queryParam += *s++, i++;
+
+            // Write value
+            if (*s == '=')
+            {
+                s++, i++;
+                while (*s != '\0' && *s != '&' && *s != '#' && !isspace(*s) && i < MAX_TARGET_URI_LENGTH)
+                    queryVal += *s++, i++;
+            }
+
+            // Increase to point to next parameter
+            if (*s == '&')
+                s++, i++;
+
+            // Decode and append to the map
+            decodeUriString(&queryParam);
+            decodeUriString(&queryVal);
+            queryParameters[queryParam] = queryVal;
+        }
+    }
+
+public:
+    Value val;
+
+    /// @brief Parses a string containing http target uri to its path and query parameters
+    /// @param s String containing target uri
+    HttpTargetUri(const char *s)
+    {
+        int i = 0;
+        uri.reserve(FRONT_RESERVED_URI_SPACE);
+
+        // Skip spaces
+        while (isspace(*s))
+            s++;
+
+        // Write till '?' appears
+        while (*s != '\0' && *s != '?' && *s != '#' && !isspace(*s) && i < MAX_TARGET_URI_LENGTH)
+            uri += *s++, i++;
+
+        // Set the value to be uri
+        val = uri;
+
+        // Start taking query parameters and values
+        if (*s == '?')
+        {
+            s++, i++;
+            parseQueryParameters(s, i);
+        }
+    }
+
+    /// @brief Get pointer to the query parameters map
+    /// @return pointer to query parameter map
+    QueryParameters *getQueryParams()
+    {
+        return &queryParameters;
+    }
+};
+
+#endif
