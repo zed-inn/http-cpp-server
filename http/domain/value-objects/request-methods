@@ -7,8 +7,7 @@
 class HttpRequestMethod
 {
 public:
-    // Http Request Method Name
-    typedef char Name;
+    typedef char Name; // Http Request Method Name
 
 protected:
     static constexpr char _GET[] = "GET";
@@ -23,6 +22,9 @@ protected:
 
     static constexpr int MAX_METHOD_NAME_LENGTH = 8;
 
+    /// @brief Maps a string to the value of the method
+    /// @param methodName string representing method
+    /// @return Name(int) value of the http method or 'INVALID'
     static constexpr Name
     mapped(char *methodName)
     {
@@ -60,9 +62,9 @@ public:
     static constexpr Name TRACE = 8;    // TRACE Method
     static constexpr Name PATCH = 9;    // PATCH Method
 
-    // Function to convert a string / character array to its representing
-    // Http request method. Checks strictly to ensure the method name
-    // maps to the defined meaning
+    /// @brief Maps a string to its representing http method. Strict checking to ensure proper meaning. Case insensitive.
+    /// @param s String containing http method
+    /// @return Name(int) value of the http method or 'INVALID'
     static Name
     mapToMethod(const char *s)
     {
