@@ -7,9 +7,9 @@
 class HttpRequestMethod
 {
 public:
-    typedef char Name; // Http Request Method Name
+    typedef unsigned char Name; // Http Request Method Name
 
-protected:
+private:
     static constexpr char _GET[] = "GET";
     static constexpr char _POST[] = "POST";
     static constexpr char _HEAD[] = "HEAD";
