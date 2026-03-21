@@ -19,6 +19,7 @@ private:
     static constexpr size_t FRONT_RESERVED_QUERY_PARAMETER_SPACE = 64;
     static constexpr size_t FRONT_RESERVED_QUERY_VALUE_SPACE = 64;
 
+    int exceedingMaxLength = false;  // If Uri length exceed the max length
     std::string uri;                 // String containing Uri Path
     QueryParameters queryParameters; // Query parameters map
 
@@ -86,6 +87,9 @@ private:
             decodeUriString(&queryVal);
             queryParameters[queryParam] = queryVal;
         }
+
+        if (i >= MAX_TARGET_URI_LENGTH)
+            exceedingMaxLength = true;
     }
 
 public:
@@ -115,6 +119,8 @@ public:
             s++, i++;
             parseQueryParameters(s, i);
         }
+        else if (i >= MAX_TARGET_URI_LENGTH)
+            exceedingMaxLength = true;
     }
 
     /// @brief Get pointer to the query parameters map
@@ -122,6 +128,13 @@ public:
     QueryParameters *getQueryParams()
     {
         return &queryParameters;
+    }
+
+    /// @brief Checks if the uri provided did exceed the max length set
+    /// @return true if exceeded
+    bool isExceedingMaxLength() const
+    {
+        return exceedingMaxLength;
     }
 };
 
