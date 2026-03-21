@@ -8,7 +8,7 @@
 class HttpTargetUri
 {
 public:
-    typedef std::unordered_map<std::string, std::string> QueryParameters;
+    typedef std::vector<std::pair<std::string, std::string>> QueryParameters;
     static constexpr size_t MAX_TARGET_URI_LENGTH = 2048;
 
 private:
@@ -66,6 +66,7 @@ private:
     static constexpr size_t FRONT_RESERVED_URI_SPACE = 64;
     static constexpr size_t FRONT_RESERVED_QUERY_PARAMETER_SPACE = 64;
     static constexpr size_t FRONT_RESERVED_QUERY_VALUE_SPACE = 64;
+    static constexpr size_t FRONT_RESERVED_QUERY_PAIRS_TOTAL_SPACE = 8;
 
     str _path;                       // String containing Uri Path
     QueryParameters queryParameters; // Query parameters map
@@ -75,6 +76,8 @@ private:
     /// @param i Position the uri has been parsed till
     void parseQueryParameters(strv s, int i)
     {
+        queryParameters.reserve(FRONT_RESERVED_QUERY_PAIRS_TOTAL_SPACE);
+
         str queryParam, queryVal;
         queryParam.reserve(FRONT_RESERVED_QUERY_PARAMETER_SPACE);
         queryParam.reserve(FRONT_RESERVED_QUERY_VALUE_SPACE);
@@ -100,13 +103,13 @@ private:
             if (p < s.end() && *p == '&')
                 p++, i++;
 
-            if (queryParam.length() == 0)
+            if (queryParam.length() == 0 && queryVal.length() == 0)
                 continue;
 
             // Decode and append to the map
             decodeUriQuery(&queryParam);
             decodeUriQuery(&queryVal);
-            queryParameters[queryParam] = queryVal;
+            queryParameters.push_back({queryParam, queryVal});
         }
     }
 
