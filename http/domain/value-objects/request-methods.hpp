@@ -1,5 +1,5 @@
 #include <cctype>
-#include "../utils/strs"
+#include "../utils/strs.hpp"
 
 #ifndef _C_HTTP_REQUEST_METHOD_
 #define _C_HTTP_REQUEST_METHOD_ 1

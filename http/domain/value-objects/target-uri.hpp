@@ -1,5 +1,6 @@
 #include <cctype>
-#include "../utils/strs"
+#include <vector>
+#include "../utils/strs.hpp"
 #include <unordered_map>
 
 #ifndef _C_HTTP_TARGET_URI_
