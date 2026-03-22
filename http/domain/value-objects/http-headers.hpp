@@ -1,4 +1,5 @@
 #include <unordered_map>
+#include <unordered_set>
 #include <cstring>
 #include <vector>
 #include "../utils/strs.hpp"
@@ -19,7 +20,8 @@ private:
     static constexpr unsigned int FRONT_RESERVED_FIELD_KEY_SPACE = 16;
     static constexpr unsigned int FRONT_RESERVED_FIELD_VALUE_SPACE = 32;
 
-    static constexpr char ALLOWED_CHAR_IN_FIELD_KEY[] = "!#$%&'*+-.^_`|~";
+    static inline const std::unordered_set<char> ALLOWED_CHARS_IN_FIELD_KEY{
+        '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~'};
 
     HeaderMap headers;
 
@@ -52,7 +54,7 @@ public:
         while (ps <= pe)
         {
             // allowed in header keys
-            if (isalnum(*ps) || strchr(ALLOWED_CHAR_IN_FIELD_KEY, *ps))
+            if (isalnum(*ps) || ALLOWED_CHARS_IN_FIELD_KEY.count(*ps))
                 key += tolower(*ps++);
             else
                 return false;
