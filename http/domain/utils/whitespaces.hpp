@@ -5,7 +5,7 @@
 #define isWS(x) (x == ' ' || x == '\t')
 
 // Carriage return
-#define isCR(x) (x == ' \r')
+#define isCR(x) (x == '\r')
 
 // Line feed
 #define isLF(x) (x == '\n')

@@ -8,7 +8,7 @@ class HttpRequestMethod
 {
 public:
     typedef unsigned short Name; // Http Request Method Name
-    static constexpr int MAX_METHOD_NAME_LENGTH = 7;
+    static constexpr size_t MAX_METHOD_NAME_LENGTH = 7;
 
     static constexpr Name INVALID = 0; // Invalid Method
     static constexpr Name GET = 1;     // GET Method
@@ -65,7 +65,7 @@ public:
 
     HttpRequestMethod(strv s) : name(mapToMethod(s)) {}
 
-    HttpRequestMethod()
+    HttpRequestMethod() {}
 
     /// @brief Maps a string to its representing http method. Strict checking to ensure proper meaning. Case insensitive.
     /// @param s String containing http method

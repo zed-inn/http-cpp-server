@@ -115,7 +115,7 @@ private:
     }
 
 public:
-    HttpTargetUri
+    HttpTargetUri() {}
 
     /// @brief Parses a string containing http target uri to its path and query parameters
     /// @param s String containing target uri

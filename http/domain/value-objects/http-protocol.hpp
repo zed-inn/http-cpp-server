@@ -6,6 +6,9 @@
 
 class HttpProtocol
 {
+public:
+    static constexpr size_t MAX_PROTOCOL_LENGTH = 8;
+
 private:
     typedef std::pair<int, int> Version;
     static constexpr char HTTP_LITERAL[] = "HTTP";
