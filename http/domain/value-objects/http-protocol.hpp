@@ -14,6 +14,8 @@ private:
     bool valid = true;
 
 public:
+    HttpProtocol() {}
+
     /// @brief Parses a string containg http protocol with versions
     /// @param s String containing protocol and version
     HttpProtocol(strv s)

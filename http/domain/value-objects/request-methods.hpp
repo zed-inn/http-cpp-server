@@ -65,6 +65,8 @@ public:
 
     HttpRequestMethod(strv s) : name(mapToMethod(s)) {}
 
+    HttpRequestMethod()
+
     /// @brief Maps a string to its representing http method. Strict checking to ensure proper meaning. Case insensitive.
     /// @param s String containing http method
     /// @return Name(int) value of the http method or 'INVALID'
