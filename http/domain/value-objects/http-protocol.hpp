@@ -36,7 +36,7 @@ public:
         }
 
         // Check if the next sequence is '/DIGIT.DIGIT'
-        if (p < s.end() && p + 3 < s.end() && *(p + 4) == '\0' && *p == '/' && isdigit(*(p + 1)) && *(p + 2) == '.' && isdigit(*(p + 3)))
+        if (p < s.end() && p + 3 < s.end() && p + 4 == s.end() && *p == '/' && isdigit(*(p + 1)) && *(p + 2) == '.' && isdigit(*(p + 3)))
         {
             version = {*(p + 1) - '0', *(p + 3) - '0'};
             return;

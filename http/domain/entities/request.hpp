@@ -68,6 +68,9 @@ private:
     // Property: String to contain request
     str container;
 
+    // Property: Whitespace removal done before another parsing task
+    bool wsRemoved = false;
+
     // Property: How much header has been parsed?
     unsigned int headerParsed = 0;
 
@@ -103,12 +106,8 @@ public:
             while (it < s.end() && !isWS(*it) && container.size() < HttpRequestMethod::MAX_METHOD_NAME_LENGTH)
                 container += *it++;
 
-            // if not given in full
-            if (it >= s.end())
-                return;
-
-            // else if is a whitespace or max length reached
-            else if (isWS(*it) || container.size() >= HttpRequestMethod::MAX_METHOD_NAME_LENGTH)
+            // if is a whitespace or max length reached
+            if (isWS(*it) || container.size() >= HttpRequestMethod::MAX_METHOD_NAME_LENGTH)
             {
                 method = HttpRequestMethod(container);
 
@@ -134,52 +133,64 @@ public:
                 parsed[PARSE_PROGRESS_METHOD] = true;
                 container.clear();
             }
+
+            // length was short
+            else if (it >= s.end())
+                return;
         }
 
         // Parse target uri
         if (!complete && reason == NO_REASON && !parsed[PARSE_PROGRESS_TARGET_URI])
         {
             // clean whitespaces
-            while (isWS(*it))
-                it++;
+            if (!wsRemoved)
+                while (isWS(*it))
+                    it++;
+            wsRemoved = true;
 
             // till another whitespace appears or max length achieved
             while (it < s.end() && !isWS(*it) && container.size() < HttpTargetUri::MAX_TARGET_URI_LENGTH)
                 container += *it++;
 
-            // if reached end
-            if (it >= s.end())
-                return;
-
-            // else if whitespace appeared or max length achieved
+            // if whitespace appeared or max length achieved
             if (isWS(*it) || container.size() >= HttpTargetUri::MAX_TARGET_URI_LENGTH)
             {
                 targetUri = HttpTargetUri(container);
 
-                parsed[PARSE_PROGRESS_TARGET_URI] = 1;
+                parsed[PARSE_PROGRESS_TARGET_URI] = true;
                 container.clear();
+                wsRemoved = false; // set as not removed for the next parsing
             }
+
+            // else if reached end
+            else if (it >= s.end())
+                return;
         }
 
         // if not parsed protocol, parse protocol
         if (!complete && reason == NO_REASON && !parsed[PARSE_PROGRESS_PROTOCOL])
         {
             // clean whitespaces
-            while (isWS(*it))
-                it++;
+            if (!wsRemoved)
+                while (isWS(*it))
+                    it++;
+            wsRemoved = true;
 
             // till reach the end of the request line or whitespace or max length of protocol
-            while (it < s.end() && (it + 1 < s.end() && !isCRLF(*it, *(it + 1))) && container.size() < HttpProtocol::MAX_PROTOCOL_LENGTH)
-                container += *it++;
-
-            // not full
-            if (it == s.end())
-                return;
-
-            // else if is crlf found
-            else if (it + 1 < s.end() && isCRLF(*it, *(it + 1)))
+            int maxLengthWithEnding = HttpProtocol::MAX_PROTOCOL_LENGTH + 2;
+            while (it < s.end() && container.length() < maxLengthWithEnding)
             {
-                protocol = HttpProtocol(container);
+                if ((container.length() >= 2 && isCRLF(*(container.end() - 2), *(container.end() - 1))))
+                    break;
+                container += *it++;
+            }
+
+            // if is crlf found at last
+            if (container.length() >= 2 && isCRLF(*(container.end() - 2), *(container.end() - 1)))
+            {
+                strv tc(container);
+                tc.remove_suffix(2);
+                protocol = HttpProtocol(tc);
 
                 // if protocol not http
                 if (protocol.isInvalid())
@@ -200,12 +211,16 @@ public:
                     return;
                 }
 
-                parsed[PARSE_PROGRESS_PROTOCOL] = 1;
+                parsed[PARSE_PROGRESS_PROTOCOL] = true;
                 container.clear();
-                it += 2; // skip crlf
+                wsRemoved = false; // for next it is not removed
             }
 
-            // else if container size if max but no crlf
+            // if not full
+            else if (it >= s.end())
+                return;
+
+            // else if container size is max but no crlf
             else
             {
                 valid = false;
@@ -218,76 +233,96 @@ public:
         // Parse headers now
         if (!complete && reason == NO_REASON && !parsed[PARSE_PROGRESS_HEADERS])
         {
-            // take till found crlf or lf or max header line size
-            while (it < s.end() && (it + 1 < s.end() && !isCRLF(*it, *(it + 1))) && container.size() < HttpHeaders::MAX_HEADER_FIELDS_LENGTH && headerParsed < MAX_ALLOWED_HEADERS)
-                container += *it++, headerParsed++;
+            // take till found crlf/2xcrlf or max header line size
+            int maxLengthWithEnding = HttpHeaders::MAX_HEADER_FIELDS_LENGTH + 2;
+            bool parsingDone = false;
 
-            // if headers are more than allowed
-            if (headerParsed >= MAX_ALLOWED_HEADERS)
+            // start parsing header lines
+            while (!parsingDone)
             {
-                valid = false;
-                complete = true;
-                reason = REQUEST_HEADER_FIELDS_TOO_LARGE;
-                return;
-            }
+                // parse one header lines
+                while (it < s.end() && container.size() < maxLengthWithEnding && headerParsed < MAX_ALLOWED_HEADERS)
+                {
+                    if (container.size() >= 2 && isCRLF(*(container.end() - 2), *(container.end() - 1)))
+                        break;
+                    container += *it++, headerParsed++;
+                }
 
-            // if string ended
-            if (it == s.end())
-                return;
-
-            // if container size is more or equal to max limits and no crlf found
-            if (container.size() >= HttpHeaders::MAX_HEADER_FIELDS_LENGTH)
-            {
-                valid = false;
-                complete = true;
-                reason = REQUEST_HEADER_FIELDS_TOO_LARGE;
-                return;
-            }
-
-            // if crlf found
-            if (it + 1 < s.end() && isCRLF(*it, *(it + 1)))
-            {
-                bool success = headers.parseAnother(container);
-
-                // if formatting not good
-                if (container.size() != 0 && !success)
+                // if headers are more than allowed
+                if (headerParsed >= MAX_ALLOWED_HEADERS)
                 {
                     valid = false;
                     complete = true;
-                    reason = BAD_HEADER_FIELDS;
+                    reason = REQUEST_HEADER_FIELDS_TOO_LARGE;
                     return;
                 }
 
-                container.clear();
-
-                if (it + 3 < s.end() && is2xCRLF(*it, *(it + 1), *(it + 2), *(it + 3)))
+                // if container size is more or equal to max limits and no crlf found
+                if (container.size() >= maxLengthWithEnding)
                 {
-                    parsed[PARSE_PROGRESS_HEADERS] = 1;
-
-                    // if bad headers are present
-                    if (!headers.isValidByValue())
-                    {
-                        valid = false;
-                        complete = true;
-                        reason = BAD_HEADER_FIELDS;
-                        return;
-                    }
-
-                    if (headers.contentLength() > 0 || headers.exists("transfer-encoding"))
-                    {
-                        valid = false;
-                        complete = true;
-                        reason = PAYLOAD_FIELDS_PRESENT_IN_HEADER;
-                        return;
-                    }
-
-                    valid = true;
+                    valid = false;
                     complete = true;
-
-                    it += 4;
+                    reason = REQUEST_HEADER_FIELDS_TOO_LARGE;
+                    return;
                 }
-                else
-                    it += 2;
+
+                // if crlf found
+                if (container.size() >= 2 && isCRLF(*(container.end() - 2), *(container.end() - 1)))
+                {
+                    // an empty CRLF found, headers over
+                    if (container.size() == 2)
+                    {
+                        parsed[PARSE_PROGRESS_HEADERS] = 1;
+
+                        // if bad headers are present
+                        if (!headers.isValidByValue())
+                        {
+                            valid = false;
+                            complete = true;
+                            reason = BAD_HEADER_FIELDS;
+                            return;
+                        }
+
+                        if (headers.contentLength() > 0 || headers.exists("transfer-encoding"))
+                        {
+                            valid = false;
+                            complete = true;
+                            reason = PAYLOAD_FIELDS_PRESENT_IN_HEADER;
+                            return;
+                        }
+
+                        // Validation till headers parsing
+                        valid = true;
+                        complete = true;
+
+                        // parsing complete
+                        parsingDone = true;
+                    }
+
+                    // contains header line
+                    else
+                    {
+                        strv tc(container);
+                        tc.remove_suffix(2);
+
+                        bool success = headers.parseAnother(tc);
+
+                        // if formatting not good
+                        if (!success)
+                        {
+                            valid = false;
+                            complete = true;
+                            reason = BAD_HEADER_FIELDS;
+                            return;
+                        }
+
+                        container.clear();
+                    }
+                }
+
+                // if string ended
+                else if (it == s.end())
+                    return;
             }
         }
     }
