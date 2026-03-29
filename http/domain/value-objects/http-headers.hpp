@@ -15,7 +15,8 @@
 class HttpHeaders
 {
 public:
-    typedef std::unordered_map<std::string, std::vector<std::string>> HeaderMap;
+    typedef std::vector<std::string> HeaderMapValues;
+    typedef std::unordered_map<std::string, HeaderMapValues> HeaderMap;
 
     static constexpr size_t MAX_HEADER_FIELD_KEY_LENGTH = 64;
     static constexpr size_t MAX_HEADER_FIELD_VALUE_LENGTH = 8192;
@@ -131,7 +132,7 @@ public:
     bool isValidByValue()
     {
         HeaderMap::iterator itx;
-        std::vector<std::string> *values;
+        HeaderMapValues *values;
 
         // Check if content length is only one and only contains digits (>=0)
         if ((itx = it("content-length")) != headers.end())

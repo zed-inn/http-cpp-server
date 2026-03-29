@@ -6,21 +6,34 @@
 #include "../value-objects/target-uri.hpp"
 #include "../value-objects/http-protocol.hpp"
 #include "../value-objects/http-headers.hpp"
+#include "../value-objects/http-status-codes.hpp"
 
 #define PARSE_PROGRESS_METHOD 1
 #define PARSE_PROGRESS_TARGET_URI 2
 #define PARSE_PROGRESS_PROTOCOL 3
 #define PARSE_PROGRESS_HEADERS 4
 
-#define NO_REASON 0
-#define INVALID_REQUEST_METHOD -1
-#define REQUEST_METHOD_NOT_ALLOWED -2
-#define INVALID_PROTOCOL -3
-#define PROTOCOL_VERSION_NOT_SUPPORTED -4
-#define BAD_REQUEST_LINE_FORMATTING -5
-#define REQUEST_HEADER_FIELDS_TOO_LARGE -6
-#define BAD_HEADER_FIELDS -7
-#define PAYLOAD_FIELDS_PRESENT_IN_HEADER -8
+// Invalid Reason for a request
+struct RequestInvalidationReason
+{
+    int statusCode;
+    const char *reason;
+} typedef rir;
+
+// Invalidation Reason
+class InValidationReason
+{
+public:
+    static constexpr rir NO_REASON = {statusCode : HttpStatusCode::OK, reason : ""};
+    static constexpr rir INVALID_REQUEST_METHOD = {statusCode : HttpStatusCode::METHOD_NOT_ALLOWED, reason : "Invalid Method"};
+    static constexpr rir METHOD_NOT_ALLOWED = {statusCode : HttpStatusCode::METHOD_NOT_ALLOWED, reason : "Method Not Allowed"};
+    static constexpr rir INVALID_PROTOCOL = {statusCode : HttpStatusCode::BAD_REQUEST, reason : "Invalid Protocol"};
+    static constexpr rir PROTOCOL_VERSION_NOT_SUPPORTED = {statusCode : HttpStatusCode::HTTP_VERSION_NOT_SUPPORTED, reason : "Protocol Version Not Supported"};
+    static constexpr rir BAD_REQUEST_LINE_FORMATTING = {statusCode : HttpStatusCode::BAD_REQUEST, reason : "Invalid Request"};
+    static constexpr rir HEADER_FIELDS_TOO_LARGE = {statusCode : HttpStatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE, reason : "Header Fields Too Large"};
+    static constexpr rir INVALID_HEADER_FIELDS = {statusCode : HttpStatusCode::BAD_REQUEST, reason : "Invalid Request"};
+    static constexpr rir PAYLOAD_FIELDS_PRESENT_IN_HEADER = {statusCode : HttpStatusCode::BAD_REQUEST, reason : "Payload Not Supported Yet"};
+} typedef IVReason;
 
 // Each time the buffer, or the character pointer will be given
 // to the request class, and the object will try to parse the
@@ -35,25 +48,23 @@
 
 class HttpRequest
 {
-
 private:
-    typedef std::unordered_map<int, bool> Progress;
-
     static constexpr size_t MAX_ALLOWED_HEADERS = 8192;
 
     static constexpr unsigned int FRONT_RESERVED_CONTAINER_SPACE = 256;
 
     // Property: Progress of parsing request
-    Progress parsed{
-        {PARSE_PROGRESS_METHOD, 0},
-        {PARSE_PROGRESS_TARGET_URI, 0},
-        {PARSE_PROGRESS_PROTOCOL, 0},
-        {PARSE_PROGRESS_HEADERS, 0}};
+    struct ParseProgress
+    {
+        bool method;
+        bool targetUri;
+        bool protocol;
+        bool headers;
+    } parsed = {method : 0, targetUri : 0, protocol : 0, headers : 0};
 
     // Property: Total progress and validity
-    int reason = NO_REASON;
-    bool valid = false;
-    bool complete = false;
+    rir reason = IVReason::NO_REASON; //  Reason for invalidity
+    bool complete = false;            // If the request is not complete and not invalid
 
     // Property: Allowed methods in http requests, currently
     static inline const std::unordered_set<HttpRequestMethod::Name> ALLOWED_METHODS = {
@@ -74,33 +85,36 @@ private:
     // Property: How much header has been parsed?
     unsigned int headerParsed = 0;
 
-public:
     // Property: Request Method
-    HttpRequestMethod method;
+    HttpRequestMethod _method;
 
     // Property: Target URI
-    HttpTargetUri targetUri;
+    HttpTargetUri _targetUri;
 
     // Property: Protocol and its version (HTTP / 1.1,1.0)
-    HttpProtocol protocol;
+    HttpProtocol _protocol;
 
     // Property: Headers of the request
-    HttpHeaders headers = HttpHeaders();
+    HttpHeaders _headers;
 
-    // Method: Parse and add more to the request
-    HttpRequest(strv s)
+public:
+    HttpRequest()
     {
         container.reserve(FRONT_RESERVED_CONTAINER_SPACE);
-
-        parseMore(s);
+        _headers = HttpHeaders();
     }
 
-    void parseMore(strv s)
+    HttpRequest(strv s, const char *it)
     {
-        auto it = s.begin();
+        HttpRequest();
+        parseMore(s, it);
+    }
 
+    // Method: Parse and add more to the request. Returns pointer till was parsed
+    const char *parseMore(strv s, const char *it)
+    {
         // Parse method
-        if (!complete && reason == NO_REASON && !parsed[PARSE_PROGRESS_METHOD])
+        if (!complete && !parsed.method)
         {
             // Till found a whitespace or till max length allowed
             while (it < s.end() && !isWS(*it) && container.size() < HttpRequestMethod::MAX_METHOD_NAME_LENGTH)
@@ -109,38 +123,36 @@ public:
             // if is a whitespace or max length reached
             if (isWS(*it) || container.size() >= HttpRequestMethod::MAX_METHOD_NAME_LENGTH)
             {
-                method = HttpRequestMethod(container);
+                _method = HttpRequestMethod(container);
 
                 // if invalid method
-                if (method.name == HttpRequestMethod::INVALID)
+                if (_method.name == HttpRequestMethod::INVALID)
                 {
                     complete = true;
-                    valid = false;
-                    reason = INVALID_REQUEST_METHOD;
-                    return;
+                    reason = IVReason::INVALID_REQUEST_METHOD;
+                    return it;
                 }
 
                 // if not in allowed methods
-                else if (ALLOWED_METHODS.count(method.name) == 0)
+                else if (ALLOWED_METHODS.count(_method.name) == 0)
                 {
                     complete = true;
-                    valid = false;
-                    reason = REQUEST_METHOD_NOT_ALLOWED;
-                    return;
+                    reason = IVReason::METHOD_NOT_ALLOWED;
+                    return it;
                 }
 
                 // in allowed method
-                parsed[PARSE_PROGRESS_METHOD] = true;
+                parsed.method = true;
                 container.clear();
             }
 
             // length was short
             else if (it >= s.end())
-                return;
+                return it;
         }
 
         // Parse target uri
-        if (!complete && reason == NO_REASON && !parsed[PARSE_PROGRESS_TARGET_URI])
+        if (!complete && !parsed.targetUri)
         {
             // clean whitespaces
             if (!wsRemoved)
@@ -155,20 +167,20 @@ public:
             // if whitespace appeared or max length achieved
             if (isWS(*it) || container.size() >= HttpTargetUri::MAX_TARGET_URI_LENGTH)
             {
-                targetUri = HttpTargetUri(container);
+                _targetUri = HttpTargetUri(container);
 
-                parsed[PARSE_PROGRESS_TARGET_URI] = true;
+                parsed.targetUri = true;
                 container.clear();
                 wsRemoved = false; // set as not removed for the next parsing
             }
 
             // else if reached end
             else if (it >= s.end())
-                return;
+                return it;
         }
 
-        // if not parsed protocol, parse protocol
-        if (!complete && reason == NO_REASON && !parsed[PARSE_PROGRESS_PROTOCOL])
+        // parse protocol
+        if (!complete && !parsed.protocol)
         {
             // clean whitespaces
             if (!wsRemoved)
@@ -190,48 +202,45 @@ public:
             {
                 strv tc(container);
                 tc.remove_suffix(2);
-                protocol = HttpProtocol(tc);
+                _protocol = HttpProtocol(tc);
 
                 // if protocol not http
-                if (protocol.isInvalid())
+                if (_protocol.isInvalid())
                 {
-                    valid = false;
                     complete = true;
-                    reason = INVALID_PROTOCOL;
-                    return;
+                    reason = IVReason::INVALID_PROTOCOL;
+                    return it;
                 }
 
                 // else if bad protocol versions
-                int major = protocol.majorVersion(), minor = protocol.minorVersion();
+                int major = _protocol.majorVersion(), minor = _protocol.minorVersion();
                 if (major < minHttpMajor || major > maxHttpMajor || minor < minHttpMinor || minor > minHttpMinor)
                 {
-                    valid = false;
                     complete = true;
-                    reason = PROTOCOL_VERSION_NOT_SUPPORTED;
-                    return;
+                    reason = IVReason::PROTOCOL_VERSION_NOT_SUPPORTED;
+                    return it;
                 }
 
-                parsed[PARSE_PROGRESS_PROTOCOL] = true;
+                parsed.protocol = true;
                 container.clear();
                 wsRemoved = false; // for next it is not removed
             }
 
             // if not full
             else if (it >= s.end())
-                return;
+                return it;
 
             // else if container size is max but no crlf
             else
             {
-                valid = false;
                 complete = true;
-                reason = BAD_REQUEST_LINE_FORMATTING;
-                return;
+                reason = IVReason::BAD_REQUEST_LINE_FORMATTING;
+                return it;
             }
         }
 
-        // Parse headers now
-        if (!complete && reason == NO_REASON && !parsed[PARSE_PROGRESS_HEADERS])
+        // Parse headers
+        if (!complete && !parsed.headers)
         {
             // take till found crlf/2xcrlf or max header line size
             int maxLengthWithEnding = HttpHeaders::MAX_HEADER_FIELDS_LENGTH + 2;
@@ -251,19 +260,17 @@ public:
                 // if headers are more than allowed
                 if (headerParsed >= MAX_ALLOWED_HEADERS)
                 {
-                    valid = false;
                     complete = true;
-                    reason = REQUEST_HEADER_FIELDS_TOO_LARGE;
-                    return;
+                    reason = IVReason::HEADER_FIELDS_TOO_LARGE;
+                    return it;
                 }
 
                 // if container size is more or equal to max limits and no crlf found
                 if (container.size() >= maxLengthWithEnding)
                 {
-                    valid = false;
                     complete = true;
-                    reason = REQUEST_HEADER_FIELDS_TOO_LARGE;
-                    return;
+                    reason = IVReason::HEADER_FIELDS_TOO_LARGE;
+                    return it;
                 }
 
                 // if crlf found
@@ -272,28 +279,24 @@ public:
                     // an empty CRLF found, headers over
                     if (container.size() == 2)
                     {
-                        parsed[PARSE_PROGRESS_HEADERS] = 1;
+                        parsed.headers = true;
 
+                        // TODO: validate header function should be in request class itself
                         // if bad headers are present
-                        if (!headers.isValidByValue())
+                        if (!_headers.isValidByValue())
                         {
-                            valid = false;
                             complete = true;
-                            reason = BAD_HEADER_FIELDS;
-                            return;
+                            reason = IVReason::INVALID_HEADER_FIELDS;
+                            return it;
                         }
 
-                        if (headers.contentLength() > 0 || headers.exists("transfer-encoding"))
+                        // Only allowing and parsing with no payloads
+                        if (_headers.contentLength() > 0 || _headers.exists("transfer-encoding"))
                         {
-                            valid = false;
                             complete = true;
-                            reason = PAYLOAD_FIELDS_PRESENT_IN_HEADER;
-                            return;
+                            reason = IVReason::PAYLOAD_FIELDS_PRESENT_IN_HEADER;
+                            return it;
                         }
-
-                        // Validation till headers parsing
-                        valid = true;
-                        complete = true;
 
                         // parsing complete
                         parsingDone = true;
@@ -305,15 +308,14 @@ public:
                         strv tc(container);
                         tc.remove_suffix(2);
 
-                        bool success = headers.parseAnother(tc);
+                        bool success = _headers.parseAnother(tc);
 
                         // if formatting not good
                         if (!success)
                         {
-                            valid = false;
                             complete = true;
-                            reason = BAD_HEADER_FIELDS;
-                            return;
+                            reason = IVReason::INVALID_HEADER_FIELDS;
+                            return it;
                         }
 
                         container.clear();
@@ -321,28 +323,74 @@ public:
                 }
 
                 // if string ended
-                else if (it == s.end())
-                    return;
+                else if (it >= s.end())
+                    return it;
             }
         }
+
+        // request parsing complete
+        complete = true;
+        return it;
     }
 
     // Method: If the request is valid now ?
-    bool isValid() const
+    bool valid() const
     {
-        return valid;
+        return reason.statusCode == IVReason::NO_REASON.statusCode;
     }
 
-    bool isCompleted() const
+    // Method: If the request is completed/parsed now ?
+    bool completed() const
     {
         return complete;
     }
 
-    std::pair<bool, int> status() const
+    // Method: If the request is invalid, what's the reason? Returns OK as Status Code if no reason
+    rir reasonForInvalid() const
     {
-        return {valid, reason};
+        return reason;
     }
 
-    // Method: Is the request is invalid, as such any parameter is bad, ill-valued
-    // not define properly as per the constraints set
+    // Method: Get MethodName
+    HttpRequestMethod::Name method() const
+    {
+        if (!valid())
+            return HttpRequestMethod::INVALID;
+
+        return _method.name;
+    }
+
+    // Method: Get Target Uri
+    strv targetUri() const
+    {
+        if (!valid())
+            return "";
+
+        return _targetUri.path();
+    }
+
+    // Method: Get Query Parameters
+    HttpTargetUri::QueryParameters *query()
+    {
+        return _targetUri.getQueryParams();
+    }
+
+    // Method:: Get protocol used
+    str protocol() const
+    {
+        if (!valid())
+            return "";
+
+        str prot = "HTTP/";
+        prot += _protocol.majorVersion() + '0';
+        prot += '.';
+        prot += _protocol.minorVersion() + '0';
+        return prot;
+    }
+
+    // Method: Get Headers
+    HttpHeaders::HeaderMap *headers()
+    {
+        return _headers.headerMap();
+    }
 };
