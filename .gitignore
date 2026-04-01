@@ -9,3 +9,7 @@ question.md
 
 # Temporary files
 temp*
+
+# bundlers
+*.txt
+bundler.*
