@@ -206,7 +206,7 @@ public:
 class HttpTargetUri : Parser
 {
 public:
-    typedef std::unordered_map<std::string, std::string> Query;
+    typedef std::unordered_map<str, str> Query;
     static constexpr size_t MAX_TARGET_URI_LENGTH = 2048;
 
 private:
@@ -319,7 +319,7 @@ private:
     bool *_absform;
 
 public:
-    HttpTargetUri(str *pathp, Query *qp, bool *absp) : _path(pathp), _query(qp), _absform(absp)
+    HttpTargetUri(str *pathp, Query *qp, bool *absform) : _path(pathp), _query(qp), _absform(absform)
     {
         _path->reserve(FRONT_RESERVED_PATH_SPACE);
     }

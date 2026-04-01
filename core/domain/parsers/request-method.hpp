@@ -10,7 +10,6 @@ public:
     typedef unsigned char Name;
     static constexpr size_t MAX_METHOD_LENGTH = 7;
 
-private:
     static constexpr Name INVALID = 0; // Invalid Method
     static constexpr Name GET = 1;     // GET Method
     static constexpr Name HEAD = 2;    // HEAD Method
@@ -22,6 +21,7 @@ private:
     static constexpr Name TRACE = 8;   // TRACE Method
     static constexpr Name PATCH = 9;   // PATCH Method
 
+private:
     Name *_name;
 
 public:
@@ -33,25 +33,24 @@ public:
         if (s.size() > MAX_METHOD_LENGTH)
             return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid HTTP Method"));
 
-        // Check the lowered version of s
-        str loweredS = tolower(s);
-        if (loweredS.compare("GET") == 0)
+        // Check if s completely matches method names
+        if (s.compare("GET") == 0)
             *_name = GET;
-        else if (loweredS.compare("POST") == 0)
+        else if (s.compare("POST") == 0)
             *_name = POST;
-        else if (loweredS.compare("HEAD") == 0)
+        else if (s.compare("HEAD") == 0)
             *_name = HEAD;
-        else if (loweredS.compare("DELETE") == 0)
+        else if (s.compare("DELETE") == 0)
             *_name = DELETE;
-        else if (loweredS.compare("PUT") == 0)
+        else if (s.compare("PUT") == 0)
             *_name = PUT;
-        else if (loweredS.compare("OPTIONS") == 0)
+        else if (s.compare("OPTIONS") == 0)
             *_name = OPTIONS;
-        else if (loweredS.compare("TRACE") == 0)
+        else if (s.compare("TRACE") == 0)
             *_name = TRACE;
-        else if (loweredS.compare("PATCH") == 0)
+        else if (s.compare("PATCH") == 0)
             *_name = PATCH;
-        else if (loweredS.compare("CONNECT") == 0)
+        else if (s.compare("CONNECT") == 0)
             *_name = CONNECT;
         else // if nothing matched
         {

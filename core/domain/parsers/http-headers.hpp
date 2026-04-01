@@ -236,7 +236,7 @@ private:
 public:
     HttpHeaders(Context *cp) : _hc(cp) {}
 
-    // parse by line
+    // parse by header line
     ParseResult parse(strv s)
     {
         if (s.length() <= 0)
@@ -273,6 +273,7 @@ public:
             pe--;
         while (p < pe)
         {
+            // add the lowered version of char
             if (isValidKeyChar(*p))
                 key += tolower(*p++);
             else
@@ -313,6 +314,7 @@ public:
             return res;
         }
 
+        _hc->sizeInBytes += s.size() + 2; // \r\n included in header size
         return ParseResult();
     }
 };
