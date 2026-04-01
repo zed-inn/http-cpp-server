@@ -7,7 +7,7 @@
 
 #define isCR(x) (x == '\r')
 
-#define isLF(x) (x = '\n')
+#define isLF(x) (x == '\n')
 
 #define isCRLF(x, y) (isCR(x) && isLF(y))
 
