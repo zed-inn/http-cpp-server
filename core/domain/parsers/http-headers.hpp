@@ -83,6 +83,9 @@ private:
                     container += *i;
             }
 
+            if (container.length() > 0)
+                commaSep.push_back(container), container.clear();
+
             // TODO: Check if they contain q parameters
             // TODO: use a struct for value and q
 
