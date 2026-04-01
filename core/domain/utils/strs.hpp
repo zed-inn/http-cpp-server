@@ -16,4 +16,23 @@ str tolower(strv s)
     return lowercased;
 }
 
+// Convert int to string
+str fromInt(long n)
+{
+    str s = "";
+    int rem;
+
+    while (n > 0)
+    {
+        s += (n % 10) + '0';
+        n /= 10;
+    }
+
+    if (s.size() == 0)
+        return "0";
+
+    reverse(s.begin(), s.end());
+    return s;
+}
+
 #endif
