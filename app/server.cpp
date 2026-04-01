@@ -60,6 +60,8 @@ int getListeningSocket(int *sockfd)
         break;
     }
 
+    freeaddrinfo(servinfo);
+
     if (p == nullptr)
         return -1; // if no working sockfd found
 
@@ -175,6 +177,8 @@ int main()
         thread t(processRequest, newfd);
         t.detach();
     }
+
+    close(listener);
 
     return 0;
 }
