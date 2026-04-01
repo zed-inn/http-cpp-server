@@ -12,6 +12,7 @@ class HttpRequest : Parser
 {
 private:
     typedef unsigned char Task;
+    typedef std::unordered_map<strv, HttpHeaders::Value> Headers;
 
     static constexpr unsigned int FRONT_RESERVED_CONTAINER_SPACE = 256;
 
@@ -66,7 +67,10 @@ private:
     HttpProtocol::Version _protVersion;
 
     // Headers Context
-    HttpHeaders::Context _headers;
+    HttpHeaders::Context _hcontext;
+
+    // Headers with strv-strv
+    Headers _headers;
 
 public:
     HttpRequest()
@@ -204,7 +208,7 @@ public:
                 // container reached limit or \r encountered
                 if (container.size() >= HttpHeaders::MAX_HEADERS_LENGTH || isCR(*p))
                 {
-                    HttpHeaders h = HttpHeaders(&_headers);
+                    HttpHeaders h = HttpHeaders(&_hcontext);
                     res = h.parse(container);
                     if (!res.success)
                     {
@@ -216,7 +220,7 @@ public:
                     tasks.doneCurrent();
 
                     // headers not done, then add another task to parse next header line
-                    if (!_headers.completed)
+                    if (!_hcontext.completed)
                     {
                         tasks.add(PARSE_HEADER_LINE);
                         tasks.add(PARSE_HEADER_LINE_ENDING);
@@ -224,18 +228,39 @@ public:
                     // if completed, check content-length/transfer-encoding to see if payload has to be parsed
                     else
                     {
+                        // convert context for headers of strv-strv
+                        for (auto x : _hcontext.mapped)
+                        {
+                            // check with named keys
+                            strv rawKey = HttpHeaderKey::RawValueByNamedKey(x.first);
+                            if (rawKey.size() == 0)
+                            {
+                                // check with unknown keys
+
+                                auto it = _hcontext.unknownKeysRev.find(x.first);
+                                if (it == _hcontext.unknownKeysRev.end())
+                                {
+                                    tasks.done();
+                                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Header Parsing Invalid"));
+                                }
+
+                                rawKey = strv(it->second->first);
+                            }
+                            _headers[rawKey] = x.second;
+                        }
+
                         // TODO: validate named headers if remaining
 
                         // currently not supporting any payload
                         // if content length and greater than 0 or transfer encoding given
-                        auto it = _headers.mapped.find(HttpHeaderKey::CONTENT_LENGTH);
-                        if (it != _headers.mapped.end())
+                        auto it = _hcontext.mapped.find(HttpHeaderKey::CONTENT_LENGTH);
+                        if (it != _hcontext.mapped.end())
                             if (auto p = std::get_if<unsigned int>(&it->second))
                                 if (*p > 0)
                                     return ParseResult(DomainError(HttpStatusCode::NOT_IMPLEMENTED, "Payload Unsupported"));
 
-                        it = _headers.mapped.find(HttpHeaderKey::TRANSFER_ENCODING);
-                        if (it != _headers.mapped.end())
+                        it = _hcontext.mapped.find(HttpHeaderKey::TRANSFER_ENCODING);
+                        if (it != _hcontext.mapped.end())
                             return ParseResult(DomainError(HttpStatusCode::NOT_IMPLEMENTED, "Payload Unsupported"));
                     }
                 }
@@ -344,21 +369,21 @@ public:
         return tasks.over();
     }
 
-    HttpRequestMethod::Name method() const
+    HttpRequestMethod::Name method()
     {
         if (!valid)
             return HttpRequestMethod::INVALID;
         return _method;
     }
 
-    str path() const
+    str path()
     {
         if (!valid)
             return "";
         return _path;
     }
 
-    str protocol() const
+    str protocol()
     {
         if (!valid)
             return "";
@@ -367,6 +392,30 @@ public:
         prot += ".";
         prot += (_protVersion.minor + '0');
         return prot;
+    }
+
+    Headers *headers()
+    {
+        if (!valid)
+            return nullptr;
+
+        return &_headers;
+    }
+
+    str query(strv key)
+    {
+        if (!valid)
+            return "";
+
+        return _query[str(key)];
+    }
+
+    HttpTargetUri::Query *query()
+    {
+        if (!valid)
+            return nullptr;
+
+        return &_query;
     }
 };
 

@@ -20,9 +20,10 @@ public:
 
     struct HeaderContext // headers context
     {
-        size_t sizeInBytes;   // how much header is done
-        HeaderMap mapped;     // key value pairs
-        Key::Map unknownKeys; // keys that are not present in NamedKeys
+        size_t sizeInBytes;         // how much header is done
+        HeaderMap mapped;           // key value pairs
+        Key::Map unknownKeys;       // keys that are not present in NamedKeys
+        Key::RevMap unknownKeysRev; // Reverse mapped for raw value
         bool completed;
 
         HeaderContext() : sizeInBytes(0), completed(false) {}
@@ -73,10 +74,10 @@ private:
             {
                 if (*i == ',')
                 {
-                    commaSep.push_back(container);
-                    container.clear(), i++;
+                    commaSep.push_back(container), container.clear(), i++;
                     while (i < rawVal.end() && isHttpSpace(*i))
                         i++;
+                    --i;
                 }
                 else
                     container += *i;
@@ -113,6 +114,7 @@ private:
                     commaSep.push_back(container), container.clear(), i++;
                     while (i < rawVal.end() && isHttpSpace(*i))
                         i++;
+                    --i;
                 }
                 else
                     container += *i;
@@ -183,7 +185,7 @@ private:
 
             // contains comma
             for (auto p = rawVal.begin(); p < rawVal.end(); p++)
-                if (*p == ',' || *p == ' ')
+                if (*p == ',')
                     return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Header Value"));
 
             // now specific to keys
@@ -304,6 +306,7 @@ public:
         {
             name = _hc->unknownKeys.size() + (Key::ToNamedKeys.size() + 1);
             _hc->unknownKeys[key] = name;
+            _hc->unknownKeysRev[name] = _hc->unknownKeys.find(key); // save iterator mapping for getting raw string values
         }
 
         // parse and push the value for the key
