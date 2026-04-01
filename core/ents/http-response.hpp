@@ -24,8 +24,8 @@ private:
 
     ResponseStatusCode statusCode; // response status code
     str message;                   // small message
-    size_t contentLength = 0;      // as in payload size
     str payload;                   // payload to add to response
+    std::unordered_map<str, str> headers;
 
 public:
     HttpResponse(ResponseStatusCode sc, str message = "") : statusCode(sc), message(message)
@@ -35,8 +35,21 @@ public:
 
     void addBody(strv body)
     {
+        // can't add more body once added
+        if (payload.size() > 0)
+            return;
+
         payload = str(body);
-        contentLength = body.size();
+    }
+
+    void addHeader(str headerName, str headerVal)
+    {
+        // Don't set headers to be set automatically
+        str loweredName = tolower(headerName);
+        if (loweredName == "content-length" || loweredName == "server" || loweredName == "Date")
+            return;
+
+        headers[headerName] = headerVal;
     }
 
     str createResponse()
@@ -52,13 +65,16 @@ public:
         response += "\r\n";
 
         // headers
+        for (auto x : headers)
+            response += x.first + ": " + x.second + "\r\n";
         response += "Date: " + httpDateNow() + "\r\n";
-        if (contentLength > 0)
-            response += "Content-Length: " + fromInt(contentLength) + "\r\n";
+        response += "Server: Localhost\r\n";
+        if (payload.size() > 0)
+            response += "Content-Length: " + fromInt(payload.size()) + "\r\n";
         response += "\r\n"; // end headers
 
         // add paylaod if any
-        if (contentLength > 0)
+        if (payload.size() > 0)
             response += payload;
 
         return response;
