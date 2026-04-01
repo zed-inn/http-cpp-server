@@ -23,8 +23,9 @@ public:
         size_t sizeInBytes;   // how much header is done
         HeaderMap mapped;     // key value pairs
         Key::Map unknownKeys; // keys that are not present in NamedKeys
+        bool completed;
 
-        HeaderContext() : sizeInBytes(0) {}
+        HeaderContext() : sizeInBytes(0), completed(false) {}
 
     } typedef Context;
 
@@ -56,10 +57,10 @@ private:
 
     static const inline std::unordered_set<Key::Name> HEADER_CONTAINING_SINGLE_VALUE{Key::ACCESS_CONTROL_ALLOW_CREDENTIALS, Key::ACCESS_CONTROL_ALLOW_ORIGIN, Key::ACCESS_CONTROL_MAX_AGE, Key::ACCESS_CONTROL_REQUEST_METHOD, Key::ACTIVATE_STORAGE_ACCESS, Key::ALT_USED, Key::AUTHORIZATION, Key::CLEAR_SITE_DATA, Key::CONTENT_DISPOSITION, Key::CONTENT_LENGTH, Key::CONTENT_LOCATION, Key::CONTENT_RANGE, Key::CONTENT_TYPE, Key::COOKIE, Key::CROSS_ORIGIN_EMBEDDER_POLICY, Key::CROSS_ORIGIN_EMBEDDER_POLICY_REPORT_ONLY, Key::CROSS_ORIGIN_OPENER_POLICY, Key::CROSS_ORIGIN_RESOURCE_POLICY, Key::DATE, Key::ETAG, Key::EXPIRES, Key::FROM, Key::HOST, Key::IF_MODIFIED_SINCE, Key::IF_RANGE, Key::IF_UNMODIFIED_SINCE, Key::INTEGRITY_POLICY, Key::INTEGRITY_POLICY_REPORT_ONLY, Key::LAST_MODIFIED, Key::LOCATION, Key::MAX_FORWARDS, Key::ORIGIN, Key::ORIGIN_AGENT_CLUSTER, Key::PREFER, Key::PREFERENCE_APPLIED, Key::PRIORITY, Key::PROXY_AUTHORIZATION, Key::REFERER, Key::REFRESH, Key::RETRY_AFTER, Key::SEC_FETCH_DEST, Key::SEC_FETCH_MODE, Key::SEC_FETCH_SITE, Key::SEC_FETCH_STORAGE_ACCESS, Key::SEC_FETCH_USER, Key::SEC_PURPOSE, Key::SEC_WEBSOCKET_ACCEPT, Key::SEC_WEBSOCKET_KEY, Key::SERVER, Key::SERVICE_WORKER, Key::SERVICE_WORKER_ALLOWED, Key::SERVICE_WORKER_NAVIGATION_PRELOAD, Key::SET_LOGIN, Key::STRICT_TRANSPORT_SECURITY, Key::UPGRADE_INSECURE_REQUESTS, Key::USER_AGENT, Key::X_CONTENT_TYPE_OPTIONS, Key::X_FRAME_OPTIONS};
 
-    ParseResult parseValueForKey(Key::Name name, strv rawVal, Value *v)
+    ParseResult parseAndSetValueForKey(Key::Name name, strv rawVal)
     {
-
-        Value temp;
+        Value *temp;
+        HeaderMap::iterator it;
 
         // Multiple values with q and separated by comma
         if (HEADER_CONTAINING_MULTIPLE_VALS_AND_Q_PARAMETER.count(name))
@@ -85,15 +86,16 @@ private:
             // TODO: use a struct for value and q
 
             // exists
-            if (_hc->mapped.count(name))
+            it = _hc->mapped.find(name);
+            if (it != _hc->mapped.end())
             {
-                if (auto p = std::get_if<std::vector<str>>(&(temp = _hc->mapped[name])))
+                if (auto p = std::get_if<std::vector<str>>(&it->second))
                     (*p).insert((*p).end(), commaSep.begin(), commaSep.end());
-
-                *v = commaSep;
+                else
+                    it->second = commaSep;
             }
             else
-                *v = commaSep;
+                _hc->mapped[name] = commaSep;
         }
 
         // Multiple values separated by comma
@@ -103,12 +105,12 @@ private:
 
             std::vector<str> commaSep;
             str container;
+            container.reserve(10);
             for (auto i = rawVal.begin(); i < rawVal.end(); i++)
             {
                 if (*i == ',')
                 {
-                    commaSep.push_back(container);
-                    container.clear(), i++;
+                    commaSep.push_back(container), container.clear(), i++;
                     while (i < rawVal.end() && isHttpSpace(*i))
                         i++;
                 }
@@ -116,56 +118,55 @@ private:
                     container += *i;
             }
 
+            if (container.length() > 0)
+                commaSep.push_back(container), container.clear();
+
             // exists
+            it = _hc->mapped.find(name);
             if (_hc->mapped.count(name))
             {
-                if (auto p = std::get_if<std::vector<str>>(&(temp = _hc->mapped[name])))
-                    (*p).insert((*p).end(), commaSep.begin(), commaSep.end());
-
+                if (auto p = std::get_if<std::vector<str>>(&it->second))
+                    p->insert(p->end(), commaSep.begin(), commaSep.end());
                 else
-                    *v = commaSep;
+                    it->second = commaSep;
             }
             else
-                *v = commaSep;
+                _hc->mapped[name] = commaSep;
 
             // check if values are ok as specification defined for different keys
+            temp = &_hc->mapped[name];
             switch (name)
             {
             case Key::TRANSFER_ENCODING:
-            {
-                auto p = std::get_if<std::vector<str>>(v);
-                if (!p && !(p = std::get_if<std::vector<str>>(&(temp = _hc->mapped[name]))))
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Transfer Encoding"));
-
-                unsigned int chunkedCount, compressCount, deflateCount, gzipCount;
-                chunkedCount = compressCount = deflateCount = gzipCount = 0;
-                for (auto word : *p)
+                if (auto p = std::get_if<std::vector<str>>(temp))
                 {
-                    if (word.compare("chunked") == 0)
-                        chunkedCount++;
-                    else if (word.compare("compress") == 0)
-                        compressCount++;
-                    else if (word.compare("deflate") == 0)
-                        deflateCount++;
-                    else if (word.compare("gzip"))
-                        gzipCount++;
-                    else
-                        return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Transfer Encoding"));
+                    unsigned int chunkedCount, compressCount, deflateCount, gzipCount;
+                    chunkedCount = compressCount = deflateCount = gzipCount = 0;
+                    for (auto word : *p)
+                    {
+                        if (word.compare("chunked") == 0)
+                            chunkedCount++;
+                        else if (word.compare("compress") == 0)
+                            compressCount++;
+                        else if (word.compare("deflate") == 0)
+                            deflateCount++;
+                        else if (word.compare("gzip") == 0)
+                            gzipCount++;
+                        else
+                            return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Transfer Encoding"));
 
-                    // if repetitions
-                    if (chunkedCount > 1 || compressCount > 1 || deflateCount > 1 || gzipCount > 1)
-                        return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Transfer Encoding"));
+                        // if repetitions
+                        if (chunkedCount > 1 || compressCount > 1 || deflateCount > 1 || gzipCount > 1)
+                            return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Transfer Encoding"));
+                    }
+
+                    // if no values
+                    if (p->size() == 0)
+                        return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "No Transfer Encodings"));
                 }
-
-                // if no values
-                if (p->size() == 0)
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "No Transfer Encodings"));
-
-                // if chunked is not last
-                if ((*(p->end())).compare("chunked") != 0)
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Transfer Encoding Ending"));
-            }
-            break;
+                else
+                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Transfer Encoding Not Set"));
+                break;
 
             default:
                 break;
@@ -176,7 +177,8 @@ private:
         else if (HEADER_CONTAINING_SINGLE_VALUE.count(name))
         {
             // already exists
-            if (_hc->mapped.count(name))
+            it = _hc->mapped.find(name);
+            if (it != _hc->mapped.end())
                 return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Header Value"));
 
             // contains comma
@@ -198,12 +200,12 @@ private:
                         return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Content Length"));
                     count = count * 10 + (*p - '0');
                 }
-                *v = count;
+                _hc->mapped[name] = count;
                 break;
             }
 
             default:
-                *v = str(rawVal);
+                _hc->mapped[name] = str(rawVal);
                 break;
             }
         }
@@ -213,16 +215,17 @@ private:
         {
             // will be only one string value, but if 1+, then append string
             // exists
-            if (_hc->mapped.count(name))
+            it = _hc->mapped.find(name);
+            if (it != _hc->mapped.end())
             {
                 // append if string
-                if (auto p = std::get_if<str>(&(temp = _hc->mapped[name])))
+                if (auto p = std::get_if<str>(&it->second))
                     *p += ", " + str(rawVal);
-
-                *v = str(rawVal);
+                else
+                    it->second = str(rawVal);
             }
             else
-                *v = str(rawVal);
+                _hc->mapped[name] = str(rawVal);
         }
 
         return ParseResult();
@@ -237,7 +240,10 @@ public:
     ParseResult parse(strv s)
     {
         if (s.length() <= 0)
+        {
+            _hc->completed = true;
             return ParseResult();
+        }
 
         if (_hc->sizeInBytes > MAX_HEADERS_LENGTH || _hc->sizeInBytes + s.length() > MAX_HEADERS_LENGTH)
             return ParseResult(DomainError(HttpStatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE, "Header Fields Too Large"));
@@ -299,14 +305,13 @@ public:
             _hc->unknownKeys[key] = name;
         }
 
-        // create value structs on basis of keys
-        Value v;
-        ParseResult res = parseValueForKey(name, val, &v);
+        // parse and push the value for the key
+        ParseResult res = parseAndSetValueForKey(name, val);
         if (!res.success)
+        {
+            _hc->completed = true;
             return res;
-
-        // push the values to the key 'name'
-        _hc->mapped[name] = v;
+        }
 
         return ParseResult();
     }
