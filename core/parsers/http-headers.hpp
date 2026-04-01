@@ -186,11 +186,6 @@ private:
             if (it != _hc->mapped.end())
                 return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Header Value"));
 
-            // contains comma
-            for (auto p = rawVal.begin(); p < rawVal.end(); p++)
-                if (*p == ',')
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Header Value"));
-
             // now specific to keys
             // TODO: each key if possible
 
