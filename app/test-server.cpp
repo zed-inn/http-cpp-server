@@ -126,12 +126,6 @@ void processRequest(int sockfd)
     close(sockfd);
 }
 
-// Create pollfd
-pollfd createPfd(int fd, short events)
-{
-    return {fd : fd, events : events, revents : 0};
-}
-
 class Descriptors
 {
 private:
