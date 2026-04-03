@@ -302,6 +302,62 @@ public:
         return ParseResult();
     }
 
+    // If the request in-memory changes location, update the location by giving the new s.begin()
+    // This action can increase in complexity as more request is parsed, updating all the pointers
+    // recreating the query and header map may increase processing time
+    // It is adviced that a higher memory be used to contain the request so as this function is used
+    // less frequently as possible
+    void propagateMemoryChange(const char *newb, const char *prev)
+    {
+        ConditionalStr key, val;
+        strv hkey, hval;
+
+        // Propagate to saved string
+        if (saved != nullptr)
+            saved = HttpUtils::changeBeginning(saved, newb, prev).begin();
+
+        // Propagate to path
+        if (auto p = std::get_if<strv>(&_uricontext.path))
+            (*p) = HttpUtils::changeBeginning(*p, newb, prev);
+
+        // Propagate to query
+        HttpTargetUri::Query newQuery;
+        for (auto q : _uricontext.query)
+        {
+            // update key
+            if (auto p = std::get_if<strv>(&q.first))
+                key = HttpUtils::changeBeginning(*p, newb, prev);
+            else
+                key = q.first;
+
+            // update val
+            if (auto p = std::get_if<strv>(&q.second))
+                val = HttpUtils::changeBeginning(*p, newb, prev);
+            else
+                val = q.second;
+
+            // add in new query map
+            newQuery[key] = val;
+        }
+        _uricontext.query = newQuery;
+
+        // Propagate to headers
+        HttpHeaders::Map newHeaderMap;
+        for (auto h : _hcontext.mapped)
+        {
+            // update key
+            hkey = HttpUtils::changeBeginning(h.first, newb, prev);
+
+            // update val and push in new vector
+            for (auto x : h.second)
+            {
+                hval = HttpUtils::changeBeginning(x, newb, prev);
+                newHeaderMap[hkey].push_back(hval);
+            }
+        }
+        _hcontext.mapped = newHeaderMap;
+    }
+
     bool completed()
     {
         return current == NO_TASK;

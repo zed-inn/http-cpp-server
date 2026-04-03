@@ -22,6 +22,11 @@ public:
 
         return s.substr(left, right - left + 1);
     }
+
+    static constexpr strv changeBeginning(strv s, const char *newb, const char *prev)
+    {
+        return strv(newb - prev + s.begin(), s.size());
+    }
 };
 
 #endif

@@ -70,10 +70,10 @@ int getListeningSocket(int *sockfd)
 
 void sendstr(int sockfd, strv s)
 {
-    int totalSent = 0, currSent;
+    size_t totalSent = 0, currSent;
     while (totalSent < s.size())
     {
-        if ((currSent = send(sockfd, s.begin(), s.size(), 0)) == -1)
+        if ((currSent = send(sockfd, s.begin(), s.size(), 0)) == (long unsigned)-1)
         {
             fprintf(stderr, "Err: %s\n", strerror(errno));
             return;
@@ -85,73 +85,53 @@ void sendstr(int sockfd, strv s)
 // Currently will only process one request and then disconnect
 void processRequest(int sockfd)
 {
-    int bytesRecieved;
-    char bytes[8192];
+    static const size_t START_SIZE = 64;
+    static const unsigned short INCREMENT_MULTIPLIER = 2;
+
+    str s;
+    s.resize(START_SIZE);
+    size_t bytesRecvd, bytesFilled = 0;
 
     HttpRequest req = HttpRequest();
-    ParseResult res;
+    HttpResponse res = HttpResponse();
+    ParseResult pres;
 
     while (!req.completed())
     {
-        bytesRecieved = recv(sockfd, bytes, sizeof(bytes), 0);
-        if (bytesRecieved <= 0)
+        bytesRecvd = recv(sockfd, s.data() + bytesFilled, s.size() - bytesFilled, 0);
+        if (bytesRecvd <= 0)
         {
             printf("Connection closed.\n");
             close(sockfd);
             return;
         }
-        res = req.parse(bytes);
-    }
+        bytesFilled += bytesRecvd;
 
-    if (!res.success)
-    {
-        if (res.error.code == HttpStatusCode::INTERNAL_SERVER_ERROR)
+        // Increase size and propagate data point changes
+        if (bytesFilled >= s.size())
         {
-            HttpResponse resp = HttpResponse(HttpStatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
-            resp.addBody("Server Issue");
-            sendstr(sockfd, resp.createResponse());
-            close(sockfd);
-            return;
+            auto prev = s.data();
+            s.resize(s.size() * INCREMENT_MULTIPLIER);
+            req.propagateMemoryChange(s.data(), prev);
         }
-        else
-        {
-            HttpResponse resp = HttpResponse(res.error.code, res.error.reason);
-            resp.addBody("Server Issue");
-            sendstr(sockfd, resp.createResponse());
-            close(sockfd);
-            return;
-        }
+
+        pres = req.parse(s);
     }
 
-    if (req.method() == HttpRequestMethod::GET && req.path() == "/hello")
+    if (!pres.success)
     {
-        HttpResponse resp = HttpResponse(HttpStatusCode::OK);
-        resp.addBody(R"(<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Hello to you too</title>
-</head>
-<body>
-  <h1>Hi there!</h1>
-  <p>Welcome to Localhost:8080</p>
-</body>
-</html>
-)");
-        resp.addHeader("Content-Type", "text/html");
-
-        sendstr(sockfd, resp.createResponse());
-        close(sockfd);
-        return;
-    }
-    else
-    {
-        HttpResponse resp = HttpResponse(HttpStatusCode::NOT_FOUND, "Not Found");
-        sendstr(sockfd, resp.createResponse());
+        res.setStatusCode(pres.error.code);
+        res.setReponseLineMesssage(pres.error.reason);
+        res.addBody("Some error occured.");
+        sendstr(sockfd, res.createResponse());
         close(sockfd);
         return;
     }
 
+    // Sending same message currently
+    res.setStatusCode(HttpStatusCode::OK);
+    res.addBody("Hello there!");
+    sendstr(sockfd, res.createResponse());
     close(sockfd);
 }
 
@@ -159,10 +139,7 @@ int main()
 {
     int listener;
     if (getListeningSocket(&listener) == -1)
-    {
-        printf("Getting listening socket failed\n");
         return 1;
-    }
 
     // Wait and Accept connection for any new socket
     while (true)
