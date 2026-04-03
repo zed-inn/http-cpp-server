@@ -1,4 +1,3 @@
-#include <queue>
 #include "../interface/parser.hpp"
 #include "../parsers/request-method.hpp"
 #include "../parsers/request-target-uri.hpp"
@@ -8,16 +7,24 @@
 #ifndef _C_HTTP_REQUEST_PARSER_
 #define _C_HTTP_REQUEST_PARSER_ 1
 
+/*
+Parsing Http Request work only when the whole request is in one memory location.
+Submitting broken parts from that memory location works.
+Broken parts must be provided in order for request to be parsed as valid.
+
+Using this parser to parse a request broken in-memory in different location may lead
+to unexpected results. It is therefore not recommended.
+*/
 class HttpRequest : Parser
 {
 private:
     typedef unsigned char Task;
-    typedef std::unordered_map<strv, HttpHeaders::Value> Headers;
 
-    static constexpr unsigned int FRONT_RESERVED_CONTAINER_SPACE = 256;
-
+    // Continous spaces allowed for not more than 32 characters
     static constexpr unsigned short CONTINOUS_OBSP_ALLOWED = 32;
 
+    // Task mapped to numbers for easier checking
+    static constexpr Task NO_TASK = 0;
     static constexpr Task PARSE_METHOD = 1;
     static constexpr Task PARSE_TARGET_URI = 2;
     static constexpr Task PARSE_PROTOCOL = 3;
@@ -29,364 +36,289 @@ private:
     static constexpr Task PARSE_OWS = 9;
     static constexpr Task PARSE_BWS = 10;
 
+    // Methods currently supported
     static const inline std::unordered_set<HttpRequestMethod::Name> ALLOWED_METHODS{HttpRequestMethod::GET};
 
-    struct TaskProgress
+    // Current (parsing) task to perform
+    Task current, prev = NO_TASK;
+
+    // Returns a parse result with removing any task remaining
+    ParseResult ErrorOccured(HttpStatusCode::IANAStatusCode sc, str reason)
     {
-    private:
-        std::queue<Task> pending;
+        current = NO_TASK;              // Set task to be NO_TASK, so to not do any parsing anymore
+        return ParseResult(sc, reason); // return the parse result
+    }
 
-    public:
-        void add(Task t) { pending.push(t); };
-        Task current() { return pending.front(); }
-        void doneCurrent() { pending.pop(); }
-        bool over() { return pending.empty(); }
-
-        void done()
-        {
-            while (!pending.empty())
-                pending.pop();
-        }
-    } tasks;
-
-    str container;
-
-    // request validity
-    bool valid = false;
+    // Previous pointer in the continous location
+    const char *saved = NULL;
 
     // Method name
     HttpRequestMethod::Name _method;
 
-    // Target Path
-    str _path;
+    // Target Uri Context
+    HttpTargetUri::Context _uricontext;
 
-    // Query Parameters
-    HttpTargetUri::Query _query;
-
-    // Protocol Version
+    // Protocol Version;
     HttpProtocol::Version _protVersion;
 
     // Headers Context
     HttpHeaders::Context _hcontext;
 
-    // Headers with strv-strv
-    Headers _headers;
+    // Validate headers
+    ParseResult validateHeaders()
+    {
+        str lowercasedKey;
+        HttpHeaderKey::Name name;
+        HttpHeaderKey::Map::const_iterator it;
+
+        // Loop over all headers
+        for (auto line : _hcontext.mapped)
+        {
+            // lowercase the current key and match with named keys
+            lowercasedKey = tolower(line.first);
+
+            // Skip non-named keys
+            it = HttpHeaderKey::NamedKeys.find(lowercasedKey);
+            if (it == HttpHeaderKey::NamedKeys.end())
+                continue;
+            name = it->second; // Set name to current
+
+            // Validate by name, payload unsupported
+            if (name == HttpHeaderKey::TRANSFER_ENCODING || (name == HttpHeaderKey::CONTENT_LENGTH && stoi(str(line.second[0])) > 0))
+                return ParseResult(HttpStatusCode::NOT_IMPLEMENTED, "Payload Unsupported");
+        }
+
+        return ParseResult();
+    }
 
 public:
-    HttpRequest()
-    {
-        container.reserve(FRONT_RESERVED_CONTAINER_SPACE);
-
-        // add tasks to do in order
-        tasks.add(PARSE_METHOD);
-        tasks.add(PARSE_RWS);
-        tasks.add(PARSE_TARGET_URI);
-        tasks.add(PARSE_RWS);
-        tasks.add(PARSE_PROTOCOL);
-        tasks.add(PARSE_REQUEST_LINE_ENDING);
-        tasks.add(PARSE_HEADER_LINE);
-        tasks.add(PARSE_HEADER_LINE_ENDING);
-    }
+    HttpRequest() : current(PARSE_METHOD) {}
 
     ParseResult parse(strv s)
     {
-        if (tasks.over())
-            return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "No Parsing Task Remain"));
+        if (current == NO_TASK)
+            return ParseResult(HttpStatusCode::INTERNAL_SERVER_ERROR, "No Parsing Task Remain");
 
+        // Join the saved pointer from before to new strv
+        if (saved != nullptr)
+            s = strv(saved, (s.begin() - saved) + s.size());
+
+        // To store intermediate results
+        strv temp;
         ParseResult res;
-        auto p = s.begin();
-        while (p < s.end() && !tasks.over())
+
+        while (current != NO_TASK)
         {
-            switch (tasks.current())
+            // Parse method
+            if (current == PARSE_METHOD)
             {
-            case PARSE_METHOD:
-                while (p < s.end() && container.size() < HttpRequestMethod::MAX_METHOD_LENGTH && !isHttpSpace(*p))
-                    container += *p++;
-
-                // if container reached limit or space encountered
-                if (container.size() >= HttpRequestMethod::MAX_METHOD_LENGTH || isHttpSpace(*p))
+                // Find the http space
+                auto sp = s.find_first_of(" \t");
+                if (sp == strv::npos)
                 {
-                    HttpRequestMethod m = HttpRequestMethod(&_method);
-                    res = m.parse(container);
-                    if (!res.success || _method == HttpRequestMethod::INVALID)
-                    {
-                        tasks.done();
-                        return res;
-                    }
+                    if (s.size() > HttpRequestMethod::MAX_METHOD_LENGTH)
+                        return ErrorOccured(HttpStatusCode::METHOD_NOT_ALLOWED, "Invalid Method");
 
-                    // not in allowed methods
-                    if (!ALLOWED_METHODS.count(_method))
-                    {
-                        tasks.done();
-                        return ParseResult(DomainError(HttpStatusCode::METHOD_NOT_ALLOWED, "Method Not Allowed"));
-                    }
-
-                    container.clear();
-                    tasks.doneCurrent();
-                }
-                // if p ended
-                else if (p >= s.end())
+                    // continue in next session
+                    saved = s.begin(); // save the current beginning of the s
                     return ParseResult();
-                else
-                {
-                    tasks.done();
-                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Unexpected Error In Method Parsing"));
                 }
 
-                break;
+                // Found a space in the given request part but at a higher index than allowed
+                if (sp > HttpRequestMethod::MAX_METHOD_LENGTH)
+                    return ErrorOccured(HttpStatusCode::METHOD_NOT_ALLOWED, "Invalid Method");
 
-            case PARSE_TARGET_URI:
-                while (p < s.end() && container.size() < HttpTargetUri::MAX_TARGET_URI_LENGTH && !isHttpSpace(*p))
-                    container += *p++;
+                // Get the method name
+                temp = s.substr(0, sp);
+                HttpRequestMethod m = HttpRequestMethod(&_method);
+                res = m.parse(temp);
 
-                // container reached limit or space encountered
-                if (container.size() >= HttpTargetUri::MAX_TARGET_URI_LENGTH || isHttpSpace(*p))
-                {
-                    bool absform;
-                    HttpTargetUri t = HttpTargetUri(&_path, &_query, &absform);
-                    res = t.parse(container);
-                    if (!res.success)
-                    {
-                        tasks.done();
-                        return res;
-                    }
+                if (!res.success || _method == HttpRequestMethod::INVALID)
+                    return ErrorOccured(HttpStatusCode::METHOD_NOT_ALLOWED, "Invalid Method");
 
-                    container.clear();
-                    tasks.doneCurrent();
-                }
-                // if p ended
-                else if (p >= s.end())
-                    return ParseResult();
-                else
-                {
-                    tasks.done();
-                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Unexpected Error In Target Uri Parsing"));
-                }
+                if (!ALLOWED_METHODS.count(_method))
+                    return ErrorOccured(HttpStatusCode::METHOD_NOT_ALLOWED, "Method Not Supported");
 
-                break;
-
-            case PARSE_PROTOCOL:
-                while (p < s.end() && container.size() != HttpProtocol::FIXED_PROTOCOL_LENGTH)
-                    container += *p++;
-
-                // container reached the protocol length
-                if (container.size() == HttpProtocol::FIXED_PROTOCOL_LENGTH)
-                {
-                    HttpProtocol p = HttpProtocol(&_protVersion);
-                    res = p.parse(container);
-                    if (!res.success)
-                    {
-                        tasks.done();
-                        return res;
-                    }
-
-                    // only 1.1 is allowed
-                    if (_protVersion.major != 1 || _protVersion.minor != 1)
-                    {
-                        tasks.done();
-                        return ParseResult(DomainError(HttpStatusCode::HTTP_VERSION_NOT_SUPPORTED, "Http Version Not Supported"));
-                    }
-
-                    container.clear();
-                    tasks.doneCurrent();
-                }
-                // if p ended
-                else if (p >= s.end())
-                    return ParseResult();
-                else
-                {
-                    tasks.done();
-                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Unexpected Error In Protocol Parsing"));
-                }
-
-                break;
-
-            case PARSE_HEADER_LINE:
-                while (p < s.end() && container.size() < HttpHeaders::MAX_HEADERS_LENGTH && !isCR(*p))
-                    container += *p++;
-
-                // container reached limit or \r encountered
-                if (container.size() >= HttpHeaders::MAX_HEADERS_LENGTH || isCR(*p))
-                {
-                    HttpHeaders h = HttpHeaders(&_hcontext);
-                    res = h.parse(container);
-                    if (!res.success)
-                    {
-                        tasks.done();
-                        return res;
-                    }
-
-                    container.clear();
-                    tasks.doneCurrent();
-
-                    // headers not done, then add another task to parse next header line
-                    if (!_hcontext.completed)
-                    {
-                        tasks.add(PARSE_HEADER_LINE);
-                        tasks.add(PARSE_HEADER_LINE_ENDING);
-                    }
-                    // if completed, check content-length/transfer-encoding to see if payload has to be parsed
-                    else
-                    {
-                        // convert context for headers of strv-strv
-                        for (auto x : _hcontext.mapped)
-                        {
-                            // check with named keys
-                            strv rawKey = HttpHeaderKey::RawValueByNamedKey(x.first);
-                            if (rawKey.size() == 0)
-                            {
-                                // check with unknown keys
-
-                                auto it = _hcontext.unknownKeysRev.find(x.first);
-                                if (it == _hcontext.unknownKeysRev.end())
-                                {
-                                    tasks.done();
-                                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Header Parsing Invalid"));
-                                }
-
-                                rawKey = strv(it->second->first);
-                            }
-                            _headers[rawKey] = x.second;
-                        }
-
-                        // TODO: validate named headers if remaining
-
-                        // currently not supporting any payload
-                        // if content length and greater than 0 or transfer encoding given
-                        auto it = _hcontext.mapped.find(HttpHeaderKey::CONTENT_LENGTH);
-                        if (it != _hcontext.mapped.end())
-                            if (auto p = std::get_if<unsigned int>(&it->second))
-                                if (*p > 0)
-                                    return ParseResult(DomainError(HttpStatusCode::NOT_IMPLEMENTED, "Payload Unsupported"));
-
-                        it = _hcontext.mapped.find(HttpHeaderKey::TRANSFER_ENCODING);
-                        if (it != _hcontext.mapped.end())
-                            return ParseResult(DomainError(HttpStatusCode::NOT_IMPLEMENTED, "Payload Unsupported"));
-                    }
-                }
-                // if p ended
-                else if (p >= s.end())
-                    return ParseResult();
-                else
-                {
-                    tasks.done();
-                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Unexpected Error In Header Line Parsing"));
-                }
-
-                break;
-
-            case PARSE_REQUEST_LINE_ENDING:
-            case PARSE_HEADER_LINE_ENDING:
-                while (p < s.end() && container.size() != 2)
-                    container += *p++;
-
-                // container limit reached
-                if (container.size() == 2)
-                {
-                    if (!isCRLF(container[0], container[1]))
-                    {
-                        tasks.done();
-                        return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Request"));
-                    }
-
-                    container.clear();
-                    tasks.doneCurrent();
-                }
-                else if (container.size() > 2)
-                {
-                    tasks.done();
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Request"));
-                }
-                // if p ended
-                else if (p >= s.end())
-                    return ParseResult();
-                else
-                {
-                    tasks.done();
-                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Unexpected Error In Request-line/Header-line Ending Parsing"));
-                }
-
-                break;
-
-            case PARSE_OWS:
-            case PARSE_BWS:
-            case PARSE_RWS:
-                while (p < s.end() && container.size() < CONTINOUS_OBSP_ALLOWED && isHttpSpace(*p))
-                    container += *p++;
-                ;
-
-                // if p ended
-                if (p >= s.end())
-                    return ParseResult();
-
-                // container reached max limit
-                if (container.size() <= CONTINOUS_OBSP_ALLOWED)
-                {
-                    // if no space
-                    if (tasks.current() == PARSE_RWS && container.size() < 1)
-                    {
-                        tasks.done();
-                        return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Request"));
-                    }
-
-                    // if limit reached and still the next char is a space
-                    else if (isHttpSpace(*p))
-                    {
-                        tasks.done();
-                        return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Continous Spaces Limit Reached"));
-                    }
-
-                    container.clear();
-                    tasks.doneCurrent();
-                }
-                else if (container.size() > CONTINOUS_OBSP_ALLOWED)
-                {
-                    tasks.done();
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Continous Spaces Limit Reached"));
-                }
-                else
-                {
-                    tasks.done();
-                    return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Unexpected Error In Request-line/Header-line Ending Parsing"));
-                }
-
-                break;
-
-            default:
-                tasks.done();
-                return ParseResult(DomainError(HttpStatusCode::INTERNAL_SERVER_ERROR, "Invalid Task"));
+                // Point the s to the new position and change task to parse RWS
+                s.remove_prefix(sp), saved = nullptr;
+                current = PARSE_RWS, prev = PARSE_METHOD;
             }
-        }
 
-        if (tasks.over())
-            valid = true;
+            // Parse Http spaces
+            else if (current == PARSE_RWS || current == PARSE_OWS || current == PARSE_BWS)
+            {
+                // Find the non-space character
+                auto nsp = s.find_first_not_of(" \t");
+                if (nsp == strv::npos)
+                {
+                    // If spaces reached limit
+                    if (s.size() > CONTINOUS_OBSP_ALLOWED)
+                        return ErrorOccured(HttpStatusCode::BAD_REQUEST, "Continous Spaces Limit Reached");
+
+                    saved = s.begin();
+                    return ParseResult();
+                }
+
+                if (nsp > CONTINOUS_OBSP_ALLOWED)
+                    return ErrorOccured(HttpStatusCode::BAD_REQUEST, "Continous Spaces Limit Reached");
+
+                // RWS requires at least 1 space
+                if (nsp < 1 && current == PARSE_RWS)
+                    return ErrorOccured(HttpStatusCode::BAD_REQUEST, "Invalid Request");
+
+                // Point to next section and set next task
+                s.remove_prefix(nsp), saved = nullptr;
+                // Prev not set for preserving previous main tasks
+                current = prev == PARSE_METHOD ? PARSE_TARGET_URI : PARSE_PROTOCOL;
+            }
+
+            // Parse Http Target Uri
+            else if (current == PARSE_TARGET_URI)
+            {
+                // Find the space character
+                auto sp = s.find_first_of(" \t");
+                if (sp == strv::npos)
+                {
+                    if (s.size() > HttpTargetUri::MAX_TARGET_URI_LENGTH)
+                        return ErrorOccured(HttpStatusCode::URI_TOO_LONG, "URI Too Long");
+
+                    saved = s.begin();
+                    return ParseResult();
+                }
+
+                // If crossing max length
+                if (sp > HttpTargetUri::MAX_TARGET_URI_LENGTH)
+                    return ErrorOccured(HttpStatusCode::URI_TOO_LONG, "URI Too Long");
+
+                temp = s.substr(0, sp);
+                HttpTargetUri h = HttpTargetUri(&_uricontext);
+                res = h.parse(temp);
+
+                if (!res.success)
+                {
+                    current = NO_TASK;
+                    return res;
+                }
+
+                // Point to next part and change task
+                s.remove_prefix(sp), saved = nullptr;
+                current = PARSE_RWS, prev = PARSE_TARGET_URI;
+            }
+
+            // Parse protocol
+            else if (current == PARSE_PROTOCOL)
+            {
+                // Find the line ending
+                auto le = s.find_first_of("\r\n");
+                if (le == strv::npos)
+                {
+                    if (s.size() > HttpProtocol::FIXED_PROTOCOL_LENGTH)
+                        return ErrorOccured(HttpStatusCode::BAD_REQUEST, "Invalid Protocol");
+
+                    saved = s.begin();
+                    return ParseResult();
+                }
+
+                if (le != HttpProtocol::FIXED_PROTOCOL_LENGTH)
+                    return ErrorOccured(HttpStatusCode::BAD_REQUEST, "Invalid Protocol");
+
+                temp = s.substr(0, le);
+                HttpProtocol p = HttpProtocol(&_protVersion);
+                res = p.parse(temp);
+
+                if (!res.success)
+                {
+                    current = NO_TASK;
+                    return res;
+                }
+
+                s.remove_prefix(le), saved = nullptr;
+                current = PARSE_REQUEST_LINE_ENDING, prev = PARSE_PROTOCOL;
+            }
+
+            // Parse line endings
+            else if (current == PARSE_REQUEST_LINE_ENDING || current == PARSE_HEADER_LINE_ENDING)
+            {
+                // if size less than 2
+                if (s.size() < 2)
+                {
+                    saved = s.begin();
+                    return ParseResult();
+                }
+
+                // Check if first two characters are \r\n
+                if (s[0] != '\r' || s[1] != '\n')
+                    return ErrorOccured(HttpStatusCode::BAD_REQUEST, "Invalid Request");
+
+                // Move to next part
+                s.remove_prefix(2), saved = nullptr;
+                // Always, after getting line ending, will be header line parsing
+                current = _hcontext.completed ? NO_TASK : PARSE_HEADER_LINE;
+            }
+
+            // Parse header line
+            else if (current == PARSE_HEADER_LINE)
+            {
+                auto le = s.find("\r\n");
+                if (le == strv::npos)
+                {
+                    if (s.size() + _hcontext.sizeInBytes > HttpHeaders::MAX_HEADERS_LENGTH)
+                        return ErrorOccured(HttpStatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE, "Header Fields Too Large");
+
+                    saved = s.begin();
+                    return ParseResult();
+                }
+
+                if (le + _hcontext.sizeInBytes > HttpHeaders::MAX_HEADERS_LENGTH)
+                    return ErrorOccured(HttpStatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE, "Header Fields Too Large");
+
+                temp = s.substr(0, le);
+                HttpHeaders h = HttpHeaders(&_hcontext);
+                res = h.parse(temp);
+
+                if (!res.success)
+                {
+                    current = NO_TASK;
+                    return res;
+                }
+
+                // Check if headers are completed, then check header values to validate
+                if (_hcontext.completed && !(res = validateHeaders()).success)
+                {
+                    current = NO_TASK;
+                    return res;
+                }
+
+                // Point to next part
+                s.remove_prefix(le), saved = nullptr;
+                current = PARSE_HEADER_LINE_ENDING, prev = PARSE_HEADER_LINE;
+            }
+
+            // Invalid parsing task
+            else
+                return ErrorOccured(HttpStatusCode::INTERNAL_SERVER_ERROR, "Invalid Parsing Task");
+        }
 
         return ParseResult();
     }
 
     bool completed()
     {
-        return tasks.over();
+        return current == NO_TASK;
     }
 
-    HttpRequestMethod::Name method()
+    auto method()
     {
-        if (!valid)
-            return HttpRequestMethod::INVALID;
         return _method;
     }
 
-    str path()
+    auto path()
     {
-        if (!valid)
-            return "";
-        return _path;
+        return _uricontext.path;
     }
 
-    str protocol()
+    auto protocol()
     {
-        if (!valid)
-            return "";
         str prot = "HTTP/";
         prot += (_protVersion.major + '0');
         prot += ".";
@@ -394,28 +326,24 @@ public:
         return prot;
     }
 
-    Headers *headers()
+    auto *headers()
     {
-        if (!valid)
-            return nullptr;
-
-        return &_headers;
+        return &_hcontext.mapped;
     }
 
-    str query(strv key)
+    auto headers(strv s)
     {
-        if (!valid)
-            return "";
-
-        return _query[str(key)];
+        return _hcontext.mapped[s];
     }
 
-    HttpTargetUri::Query *query()
+    auto *query()
     {
-        if (!valid)
-            return nullptr;
+        return &_uricontext.query;
+    }
 
-        return &_query;
+    auto query(strv s)
+    {
+        return _uricontext.query[s];
     }
 };
 

@@ -31,7 +31,7 @@ public:
     {
         // If size is greater than allowed
         if (s.size() > MAX_METHOD_LENGTH)
-            return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid HTTP Method"));
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid HTTP Method");
 
         // Check if s completely matches method names
         if (s.compare("GET") == 0)
@@ -55,7 +55,7 @@ public:
         else // if nothing matched
         {
             *_name = INVALID;
-            return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid HTTP Method"));
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid HTTP Method");
         }
 
         return ParseResult();

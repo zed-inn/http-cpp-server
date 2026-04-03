@@ -11,12 +11,14 @@ struct ParseResult
 
     ParseResult() : success(true) {}
     ParseResult(DomainError error) : success(false), error(error) {}
+    ParseResult(HttpStatusCode::IANAStatusCode statusCode) : success(false), error(DomainError(statusCode, "")) {}
+    ParseResult(HttpStatusCode::IANAStatusCode statusCode, str errMessage) : success(false), error(DomainError(statusCode, errMessage)) {}
 };
 
 class Parser
 {
 public:
-    virtual ParseResult parse(strv s)
+    virtual ParseResult parse(strv)
     {
         return ParseResult();
     };

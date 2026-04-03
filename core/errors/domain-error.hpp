@@ -4,14 +4,12 @@
 #ifndef _C_HTTP_DOMAIN_ERROR_
 #define _C_HTTP_DOMAIN_ERROR_ 1
 
-class DomainError
+struct DomainError
 {
-public:
     HttpStatusCode::IANAStatusCode code;
     str reason;
 
     DomainError() : code(HttpStatusCode::OK) {}
-
     DomainError(HttpStatusCode::IANAStatusCode code, str message) : code(code), reason(message) {}
 };
 

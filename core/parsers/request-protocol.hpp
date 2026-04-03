@@ -1,4 +1,4 @@
-#include <set>
+#include <array>
 #include "../interface/parser.hpp"
 
 #ifndef _C_HTTP_PROTOCOL_PARSER_
@@ -21,7 +21,16 @@ public:
     static constexpr size_t FIXED_PROTOCOL_LENGTH = 8;
 
 private:
-    static const inline std::set<std::pair<V, V>> VALID_VERSIONS{{0, 9}, {1, 0}, {1, 1}, {2, 0}, {3, 0}};
+    static constexpr bool isValidVersion(V major, V minor)
+    {
+        if (major == 0 && minor == 9)
+            return true;
+        else if (major == 1 && (minor == 0 || minor == 1))
+            return true;
+        else if (minor == 0 && (major == 2 || major == 3))
+            return true;
+        return false;
+    }
 
     Version *_prot;
 
@@ -30,27 +39,28 @@ public:
 
     ParseResult parse(strv s)
     {
-        if (s.length() != FIXED_PROTOCOL_LENGTH)
-            return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Protocol"));
+        if (s.size() != FIXED_PROTOCOL_LENGTH)
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid Protocol");
 
-        auto p = s.begin();
+        // Should start with "HTTP/"
+        auto front = s.find("HTTP/");
+        if (front != 0)
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid Protocol");
 
-        // parse the first 5 chars 'http/'
-        if (*p != 'H' || *(p + 1) != 'T' || *(p + 2) != 'T' || *(p + 3) != 'P' || *(p + 4) != '/')
-            return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Protocol"));
-        p += 5;
-
-        // check the versions
+        // Check the versions
+        auto p = s.begin() + 5;
         if (isdigit(*p) && *(p + 1) == '.' && isdigit(*(p + 2)))
         {
             V major = *p - '0', minor = *(p + 2) - '0';
-            if (VALID_VERSIONS.count({major, minor}) != 0)
+            if (isValidVersion(major, minor))
             {
-                *_prot = Version(major, minor);
+                _prot->major = major, _prot->minor = minor;
                 return ParseResult();
             }
         }
-        return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Protocol Version"));
+
+        // Invalid Version Format or not a digit in them
+        return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid Protocol Version");
     }
 };
 

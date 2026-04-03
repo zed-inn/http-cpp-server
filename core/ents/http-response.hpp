@@ -4,52 +4,54 @@
 #ifndef _C_HTTP_RESPONSE_
 #define _C_HTTP_RESPONSE_ 1
 
-// Minimal headers currently
-// Date and Content-Length
-// Content Type would be text/plain
+/*
+Minimal Http Response generator
+You can add other headers except for Date/Server/Content-Length which will be set automatically
+Content-Type by default would be set to text/plain
 
-// protocol getting used will be HTTP/1.1
-
-// Would not use Transfer-Encoding
-
+Protocol using is HTTP/1.1
+Transfer encoding is not supported
+*/
 class HttpResponse
 {
 private:
-    typedef unsigned short ResponseStatusCode;
-
-    static constexpr size_t FRONT_RESERVED_PAYLOAD_SPACE = 256;
     static constexpr size_t FRONT_RESERVED_RESPONSE_SPACE = 128;
 
-    static const inline str PROTOCOL_LITERAL = "HTTP/1.1";
+    static constexpr const char *PROTOCOL_LITERAL = "HTTP/1.1";
 
-    ResponseStatusCode statusCode; // response status code
-    str message;                   // small message
-    str payload;                   // payload to add to response
-    std::unordered_map<str, str> headers;
+    HttpStatusCode::IANAStatusCode statusCode; // response status code
+    str message;                               // small message to be put in response line
+    str payload;                               // payload to add to response
+    std::unordered_map<str, str> headers;      // headers to be sent in response
 
 public:
-    HttpResponse(ResponseStatusCode sc, str message = "") : statusCode(sc), message(message)
+    void setStatusCode(HttpStatusCode::IANAStatusCode sc)
     {
-        payload.reserve(FRONT_RESERVED_PAYLOAD_SPACE);
+        statusCode = sc;
     }
 
-    void addBody(strv body)
+    void setReponseLineMesssage(str message)
     {
-        // can't add more body once added
+        message = message;
+    }
+
+    void addBody(str body)
+    {
+        // Can't add more body once added
         if (payload.size() > 0)
             return;
 
-        payload = str(body);
+        payload = body;
     }
 
-    void addHeader(str headerName, str headerVal)
+    void addHeader(str key, str val)
     {
-        // Don't set headers to be set automatically
-        str loweredName = tolower(headerName);
-        if (loweredName == "content-length" || loweredName == "server" || loweredName == "Date")
+        // Don't set headers to be set automatically for content-length, server and date
+        str loweredName = tolower(key);
+        if (loweredName.compare("content-length") == 0 || loweredName.compare("server") == 0 || loweredName.compare("date"))
             return;
 
-        headers[headerName] = headerVal;
+        headers[key] = val;
     }
 
     str createResponse()
@@ -57,23 +59,27 @@ public:
         str response;
         response.reserve(FRONT_RESERVED_RESPONSE_SPACE);
 
-        // status line
+        // Response status line
         response += PROTOCOL_LITERAL;
-        response += " " + fromInt(statusCode);
+        response += " " + std::to_string(statusCode);
         if (message.size() != 0)
             response += " " + message;
         response += "\r\n";
 
-        // headers
+        // Set headers
         for (auto x : headers)
             response += x.first + ": " + x.second + "\r\n";
         response += "Date: " + httpDateNow() + "\r\n";
-        response += "Server: Localhost\r\n";
+        response += "Server: Localhost:8080\r\n"; // Currently hard-coded, TODO: Create environment variables
         if (payload.size() > 0)
-            response += "Content-Length: " + fromInt(payload.size()) + "\r\n";
+        {
+            // Put content length and type only when payload set
+            response += "Content-Length: " + std::to_string(payload.size()) + "\r\n";
+            response += "Content-Type: " + (headers.find("Content-Type") != headers.end() ? headers["Content-Type"] : "text/plain");
+        }
         response += "\r\n"; // end headers
 
-        // add paylaod if any
+        // Add payload if any
         if (payload.size() > 0)
             response += payload;
 

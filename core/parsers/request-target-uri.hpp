@@ -1,481 +1,495 @@
 #include <vector>
 #include <unordered_map>
+#include <variant>
 #include "../interface/parser.hpp"
-#include "../utils/macros.hpp"
+#include "../utils/http-utils.hpp"
 
 #ifndef _C_HTTP_TARGET_URI_PARSER_
 #define _C_HTTP_TARGET_URI_PARSER_ 1
 
-class SchemeValidation
-{
-public:
-    static const inline bool isHttp(const char *p, const char *e)
-    {
-        return (p + 6 < e && *p == 'h' && *(p + 1) == 't' && *(p + 2) == 't' && *(p + 3) == 'p' && *(p + 4) == ':' && *(p + 5) == '/' && *(p + 6) == '/');
-    }
+// Conditional String allocates str on special conditions
+typedef std::variant<str, strv> ConditionalStr;
 
-    static const inline bool isHttps(const char *p, const char *e)
-    {
-        return (p + 7 < e && *p == 'h' && *(p + 1) == 't' && *(p + 2) == 't' && *(p + 3) == 'p' && *(p + 4) == 's' && *(p + 5) == ':' && *(p + 6) == '/' && *(p + 7) == '/');
-    }
-} typedef Scheme;
+// Operator '<<' for using cout to print ConditionalStr
+std::ostream &operator<<(std::ostream &os, ConditionalStr const &v)
+{
+    std::visit([&](auto const &s)
+               { os << s; }, v);
+    return os;
+}
 
 class AuthorityValidation
 {
-private:
-    static const inline bool isIPv6PrefixOfConvIPv4(const char *p, const char *e)
-    {
-        return (p + 7 < e && *p == ':' && *(p + 1) == ':' && *(p + 2) == 'f' && *(p + 3) == 'f' && *(p + 4) == ':' && *(p + 5) == '0' && *(p + 6) == '0' && *(p + 7) == ':');
-    }
-
 public:
-    static const inline bool isValidIPv6(const char *p, const char *e, const char **next)
+    static inline bool isValidIPv6(strv addr)
     {
         // Check if converted from ipv4
-        if (isIPv6PrefixOfConvIPv4(p, e))
-            return isValidIPv4(p + 8, e, next);
+        auto v4pref = addr.find("::ffff:");
+        if (v4pref == 0)
+            return isValidIPv4(addr);
 
-        const char *validTill = p;
-        unsigned totalLen = 0;
-        unsigned short total2xColons = 0, totalColons = 0, totalHexDigits = 0;
+        // Check if length within 39
+        if (addr.size() > 39)
+            return false;
 
-        // till it contains <=32 hexdigits and <=7 colons and <=1 2x-colon
-        while (validTill < e && (isHexDigit(*validTill) || *validTill == ':'))
+        // Checks specific lengths
+        if (addr.size() < 2) // atleast needs two colons
+            return false;
+        else if (addr.size() == 2 && (addr[0] != ':' || addr[1] != ':')) // must be '::'
+            return false;
+        else if (*addr.begin() == ':' && *addr.end() == ':') // Mustn't start and end with colons
+            return false;
+
+        // Using char as all of them will be within <256
+        unsigned char c, digits, colons, colons2x, fields, dgsInField;
+        digits = colons2x = colons = fields = dgsInField = 0;
+
+        for (auto p = addr.begin(); p < addr.end(); p++)
         {
-            if (*validTill == ':')
+            c = *p; // For NOT indirection many times
+
+            // Checks for allowable characters
+            if (isHexDigit(c))
+                digits++, dgsInField++;
+            else if (c == ':')
             {
-                totalColons++;
-                if (validTill + 1 < e && *(validTill + 1) == ':')
-                    total2xColons++;
-            }
-            else
-                totalHexDigits++;
+                colons++;
 
-            if (total2xColons > 1 || totalColons > 7 || totalHexDigits > 32)
-                return false;
-
-            validTill++;
-        }
-
-        totalLen = validTill - p;
-        if (totalLen > 39)
-            return false;
-
-        // atleast two colons are necessary
-        if (totalLen < 2)
-            return false;
-        else if (totalLen == 2)
-            return *p == ':' && *(p + 1) == ':';
-        else if (*p == ':' && *(validTill - 1) == ':')
-            return false;
-
-        // check if each colon contains <=4 digits
-        int dgs, fields = 0;
-        const char *r;
-        for (auto q = p; q < validTill;)
-        {
-            dgs = 0;
-            for (r = q; r < validTill && *r != ':'; r++)
-                dgs++;
-            fields++; // increase fields
-
-            if (dgs > 4)
-                return false;
-
-            r += *r == ':';
-            r += r < validTill && *r == ':';
-            q = r;
-        }
-
-        // if colon, then fields could be less
-        if (total2xColons)
-        {
-            *next = validTill; // set here too
-            return fields <= 8;
-        }
-
-        if (fields == 8)
-        {
-            *next = validTill; // point to next one
-            return true;
-        }
-
-        return false;
-    }
-
-    static const inline bool isValidIPv4(const char *p, const char *e, const char **next)
-    {
-
-        auto validTill = p;
-        int totalNums = 0, totalDots = 0, totalLen = 0;
-
-        // check till valid chars
-        while (validTill < e && ((*validTill >= '0' && *validTill <= '9') || *validTill == '.'))
-        {
-
-            if (*validTill == '.')
-            {
-                if (validTill + 1 < e && *(validTill + 1) == '.')
+                // Check digits in one field
+                if (dgsInField > 4)
                     return false;
-                totalDots++;
+                dgsInField = 0;
+
+                // Checks for 2x colons
+                if (p + 1 < addr.end() && *(p + 1) == ':')
+                    colons2x++;
             }
             else
-                totalNums++;
-
-            if (totalDots > 3 || totalNums > 12)
                 return false;
-
-            validTill++;
         }
 
-        totalLen = validTill - p;
-        if (totalLen < 6 || totalLen > 15)
+        // Checks if all values within valid range
+        if (colons > 7 || digits > 32 || colons2x > 1 || dgsInField > 4)
             return false;
 
-        if (*p == '.' || *(validTill - 1) == '.')
+        // Fields could be less in case of '::' appearing
+        return colons2x ? fields <= 8 : fields == 8;
+    }
+
+    static inline bool isValidIPv4(strv addr)
+    {
+        // Checks size with valid bounds
+        if (addr.size() < 7 || addr.size() > 15)
             return false;
 
-        // check if numbers in 0-255
-        str s;
-        s.reserve(3);
-        const char *r;
-        int temp, fields = 0;
-        for (auto q = p; q < validTill;)
-        {
-            s.clear();
-            r = q;
-            while (r < validTill && *r != '.')
-                s += *r++;
-            fields++;
-
-            temp = stoi(s);
-            if (temp < 0 || temp > 255)
+        // Checks for allowable characters
+        for (auto x : addr)
+            if (!(x >= '0' && x <= '9') && x != '.')
                 return false;
 
-            r += *r == '.';
-            q = r;
-        }
+        size_t pos;
+        strv val;
+        unsigned int ival;
+        unsigned char fields = 0;
 
-        // must have 4 fields
-        if (fields == 4)
+        while ((pos = addr.find('.')) != strv::npos)
         {
-            *next = validTill; // point to next one
-            return true;
+            // Checks if field contains 1-3 digits
+            val = addr.substr(0, pos);
+            if (val.size() <= 0 || val.size() > 3)
+                return false;
+
+            // Check the numeric value to be in 0-255
+            ival = stoi(str(val));
+            if (ival > 255)
+                return false;
+            fields++; // Increment fields
+
+            addr = addr.substr(pos + 1);
         }
 
-        return false;
+        // If some field still remains after last '.'
+        if (addr.size() <= 0)
+            return false;
+
+        // Check last field
+        ival = stoi(str(addr));
+        if (ival > 255)
+            return false;
+        fields++;
+
+        return fields == 4;
     }
 
-    static const inline bool isValidDomainName(const char *p, const char *e, const char **next)
+    static inline bool isValidDomainName(strv domain)
     {
-        auto validTill = p;
+        // Checks if there is something
+        if (domain.size() <= 0)
+            return false;
 
-        while (validTill < e && (isalnum(*validTill) || *validTill == '.'))
-            validTill++;
+        // Checks it shouldn't start with dots
+        if (*domain.begin() == '.' || *domain.end() == '.')
+            return false;
 
-        // should have at least one length
-        if (validTill - p > 0)
+        // Checks for allowable characters
+        for (auto x : domain)
+            if (!isalnum(x) && x != '.')
+                return false;
+
+        // Checks if 2 '.' doesn't come together
+        size_t pos;
+        while ((pos = domain.find('.')) != strv::npos)
         {
-            *next = validTill;
-            return true;
+            if (pos + 1 < domain.size() && domain[pos + 1] == '.')
+                return false;
+            domain = domain.substr(pos + 1);
         }
 
-        return false;
+        return true;
     }
 
-    static const inline bool isValidPortNumber(const char *p, const char *e, const char **next)
+    static inline bool isValidPortNumber(strv p)
     {
-        int temp = 0, len = 0;
+        // Checks if size is less than 5 (0-65535)
+        if (p.size() <= 0 || p.size() > 5)
+            return false;
 
-        while (p < e && (*p >= '0' && *p <= '9') && len <= 5)
-        {
-            temp = temp * 10 + (*p - '0');
-            len++, p++;
-        }
+        // Checks for allowable characters
+        for (auto x : p)
+            if (x < '0' || x > '9')
+                return false;
 
-        if (temp >= 0 && temp <= 65535)
-        {
-            *next = p;
-            return true;
-        }
-
-        return false;
+        // Checks numerica value to be within 0-65535
+        unsigned int ip = stoi(str(p));
+        return ip <= 65535;
     }
 };
 
 class HttpTargetUri : Parser
 {
+private:
+    typedef std::unordered_map<ConditionalStr, ConditionalStr> Query;
+
 public:
-    typedef std::unordered_map<str, str> Query;
+    struct URIContext
+    {
+        bool isPathAuthorityForm; // In context when needed for OPTIONS method
+        ConditionalStr path;
+        Query query;
+
+    } typedef Context;
+
     static constexpr size_t MAX_TARGET_URI_LENGTH = 2048;
 
 private:
     static constexpr size_t MAX_QUERY_KEY_LENGTH = 256;
     static constexpr size_t MAX_QUERY_VALUE_LENGTH = 2048;
 
-    static constexpr size_t FRONT_RESERVED_PATH_SPACE = 64;
-    static constexpr size_t FRONT_RESERVED_QUERY_KEY_SPACE = 32;
-    static constexpr size_t FRONT_RESERVED_QUERY_VALUE_SPACE = 64;
+    static constexpr size_t FRONT_RESERVED_PATH_SPACE = 32;
+    static constexpr size_t FRONT_RESERVED_QUERY_SPACE = 16;
 
-    ParseResult parsePath(const char **_p, const char *e)
+    Context *_uc;
+
+    ParseResult decodeUriEncoded(strv v, str *s, strv nonConvertables = "")
     {
-        auto p = *_p;
+        size_t p, tmp;
         int charNum;
 
-        while (p < e && *p != '?')
+        while ((p = v.find('%')) != strv::npos)
         {
-            // %Hexhex uri decoding
-            if (*p == '%' && p + 2 < e && isHexDigit(*(p + 1)) && isHexDigit(*(p + 2)))
+            // Add till before '%'
+            *s += v.substr(0, p);
+
+            // Decode
+            if (p + 2 < v.size() && isHexDigit(v[p + 1]) && isHexDigit(v[p + 2]))
             {
-                charNum = stoi(str({*(p + 1), *(p + 2)}), nullptr, 16);
+                // Convert hex to regular ascii value
+                charNum = stoi(str({v[p + 1], v[p + 2]}), nullptr, 16);
 
-                // if special characters that can change meaning of the path, skip
-                if (charNum == '?' || charNum == '/' || charNum == '#')
-                    *_path += *p++;
-                else
-                    *_path += charNum, p += 3;
-            }
-
-            // invalid use of %
-            else if (*p == '%')
-                return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid URI"));
-
-            else
-                *_path += *p++;
-        }
-
-        *_p = p;
-        return ParseResult();
-    }
-
-    ParseResult parseQuery(const char **_p, const char *e)
-    {
-        auto p = *_p;
-
-        str queryKey, queryVal;
-        queryKey.reserve(FRONT_RESERVED_QUERY_KEY_SPACE);
-        queryVal.reserve(FRONT_RESERVED_QUERY_VALUE_SPACE);
-
-        // till fragment or string over
-        while (p < e && *p != '#')
-        {
-            // clear both the container strings
-            queryKey.clear(), queryVal.clear();
-
-            // collect key
-            while (p < e && *p != '=' && *p != '&' && *p != '#')
-            {
-                // %Hexhex uri decoding
-                if (*p == '%' && p + 2 < e && isHexDigit(*(p + 1)) && isHexDigit(*(p + 2)))
-                    queryKey += stoi(str({*(p + 1), *(p + 2)}), nullptr, 16), p += 3;
-
-                // invalid use of %
-                else if (*p == '%')
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid URI"));
-
-                // any other character
-                else
-                    queryKey += *p == '+' ? ' ' : *p, p++;
-            }
-
-            if (p < e && *p == '=')
-            {
-                p++;
-
-                // collect value
-                while (p < e && *p != '#' && *p != '&')
+                // If not allowed to be converted
+                if ((tmp = nonConvertables.find(charNum)) != strv::npos)
                 {
-                    // %Hexhex uri decoding
-                    if (*p == '%' && p + 2 < e && isHexDigit(*(p + 1)) && isHexDigit(*(p + 2)))
-                        queryVal += stoi(str({*(p + 1), *(p + 2)}), nullptr, 16), p += 3;
-
-                    // invalid use of %
-                    else if (*p == '%')
-                        return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid URI"));
-
-                    // any other character
-                    else
-                        queryVal += *p == '+' ? ' ' : *p, p++;
+                    s += '%', v = v.substr(p + 1);
+                    continue;
                 }
+
+                // Increment by 3 for %XX
+                *s += charNum, v = v.substr(p + 3);
             }
 
-            // move to next query
-            if (p < e && *p == '&')
-                p++;
-
-            // if no key and no value
-            if (!queryKey.length() && !queryVal.length())
-                continue;
-
-            _query->insert({queryKey, queryVal});
+            // Not valid %XX
+            else
+                return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid URI");
         }
 
-        *_p = p;
+        // Some path still remaining
+        if (v.size() > 0)
+            *s += v;
+
         return ParseResult();
     }
 
-    str *_path;
-    Query *_query;
-    bool *_absform;
+    ParseResult decodeAndSaveQueryParameters(strv key, strv val)
+    {
+        ConditionalStr _key, _val;
+        ParseResult res;
+
+        // Decode key first
+
+        size_t pos;
+        if ((pos = key.find('%')) == strv::npos && (pos = key.find('+')) == strv::npos)
+            _key = key;
+
+        // have to decode
+        else
+        {
+            str s;
+            s.reserve(FRONT_RESERVED_QUERY_SPACE);
+
+            if (!(res = decodeUriEncoded(key, &s)).success)
+                return res;
+
+            // Convert all '+' to ' '
+            for (auto p = s.begin(); p < s.end(); p++)
+                if (*p == '+')
+                    *p = ' ';
+
+            _key = s; // Set the string to be key
+        }
+
+        // Decode value now
+
+        if ((pos = val.find('%')) == strv::npos && (pos = key.find('+')) == strv::npos)
+            _val = val;
+
+        // have to decode
+        else
+        {
+            str s;
+            s.reserve(FRONT_RESERVED_QUERY_SPACE);
+
+            if (!(res = decodeUriEncoded(val, &s)).success)
+                return res;
+
+            // Convert all '+' to ' '
+            for (auto p = s.begin(); p < s.end(); p++)
+                if (*p == '+')
+                    *p = ' ';
+
+            _val = s; // Set the string to be key
+        }
+
+        // Save the pair
+        _uc->query[_key] = _val;
+
+        return ParseResult();
+    }
+
+    ParseResult parseQuery(strv qs)
+    {
+        // Separate by '&'
+        size_t pos, eq;
+        strv temp, key, val;
+        ParseResult res;
+        while ((pos = qs.find('&')) != strv::npos)
+        {
+            // Get only one block
+            temp = qs.substr(0, pos);
+
+            if ((eq = temp.find('=')) == strv::npos)
+                key = temp, val = temp.substr(temp.size() - 1, 0);
+            else
+                key = temp.substr(0, eq), val = temp.substr(eq + 1);
+
+            // Decode query and val
+            if (!(res = decodeAndSaveQueryParameters(key, val)).success)
+                return res;
+
+            qs = qs.substr(pos + 1); // Move to next &-block
+        }
+
+        // If still some query-string left
+        if (qs.size() > 0)
+        {
+            if ((eq = qs.find('=')) == strv::npos)
+                key = qs, val = qs.substr(qs.size() - 1, 0);
+            else
+                key = qs.substr(0, eq), val = qs.substr(eq + 1);
+
+            // Decode query and val
+            if (!(res = decodeAndSaveQueryParameters(key, val)).success)
+                return res;
+        }
+
+        return ParseResult();
+    }
+
+    ParseResult validateAuthority(strv a)
+    {
+        // Checks if it is something
+        if (a.size() <= 0)
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid Authority");
+
+        // Check if Ipv6
+        if (a[0] == '[')
+        {
+            // Check if it closes and is valid ipv6
+            auto b = a.find(']');
+            if (b == strv::npos || !AuthorityValidation::isValidIPv6(a.substr(1, b)))
+                return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid Authority");
+
+            a = a.substr(b + 1); // Move to [:port] part
+        }
+
+        // Check if Ipv4 or domain name
+        else if (isalnum(a[0]))
+        {
+            // Get the colon position
+            auto c = a.find(':');
+            strv temp = c != strv::npos ? a.substr(0, c) : a;
+
+            // Checks if not ipv4 and not domain name
+            if (!AuthorityValidation::isValidIPv4(temp) && !AuthorityValidation::isValidDomainName(temp))
+                return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid Authority");
+
+            a = c != strv::npos ? a.substr(c) : a.substr(a.size() - 1, 0); // including ':' due to ipv6 also having
+        }
+
+        // Invalid
+        else
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid Authority");
+
+        // Validate port
+
+        // If nothing here, or only colon
+        if (a.size() <= 0 || (a.size() == 1 && a[0] == ':'))
+            return ParseResult();
+
+        // If colon and value later
+        if (a.size() > 1 && AuthorityValidation::isValidPortNumber(a.substr(1)))
+            return ParseResult();
+        else
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid Authority");
+    }
+
+    ParseResult decodeAndSaveUriPath(strv u)
+    {
+        // Check if something to decode '%'
+        auto pf = u.find('%');
+        if (pf == strv::npos)
+        {
+            _uc->path = u;
+            return ParseResult();
+        }
+
+        // Decoding is required
+        str s;
+        ParseResult res;
+        s.reserve(FRONT_RESERVED_PATH_SPACE);
+
+        // Skip if decoded to be ?, # or / which can change meaning of uri
+        if (!(res = decodeUriEncoded(u, &s, "?#/")).success)
+            return res;
+
+        _uc->path = s;
+
+        return ParseResult();
+    }
+
+    ParseResult parsePath(strv u)
+    {
+        if (u.size() <= 0)
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid URI");
+
+        size_t ht;
+        ParseResult res;
+
+        // Origin form
+        if (u[0] == '/')
+            return decodeAndSaveUriPath(u);
+
+        // Asterisk form
+        else if (u[0] == '*')
+        {
+            // is not just '*'
+            if (u.size() > 1)
+                return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid URI");
+
+            // Set to just '/'
+            _uc->path = str("/");
+        }
+
+        // Absolute form
+        else if ((ht = u.find("http://")) == 0 || (ht = u.find("https://")) == 0)
+        {
+            // Check if 5th character is 's' for differentiating http or https scheme
+            u.remove_prefix(u[4] == 's' ? 8 : 7);
+
+            // Split in authority and path
+            auto sl = u.find('/');
+            if (sl == strv::npos)
+                return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid URI");
+
+            // Validate authority
+            if (!(res = validateAuthority(u.substr(0, sl))).success)
+                return res;
+
+            return decodeAndSaveUriPath(u.substr(sl));
+        }
+
+        // Authority form
+        else
+        {
+            // Must not have any '/' in uri
+            auto sl = u.find('/');
+            if (sl != strv::npos)
+                return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid URI");
+
+            // Validate authority
+            if (!(res = validateAuthority(u)).success)
+                return res;
+
+            // Set to just '/'
+            _uc->path = str("/");
+            _uc->isPathAuthorityForm = true;
+        }
+
+        return ParseResult();
+    }
 
 public:
-    HttpTargetUri(str *pathp, Query *qp, bool *absform) : _path(pathp), _query(qp), _absform(absform)
-    {
-        _path->reserve(FRONT_RESERVED_PATH_SPACE);
-    }
+    HttpTargetUri(Context *uric) : _uc(uric) {}
 
     ParseResult parse(strv s) override
     {
+        if (s.size() > MAX_TARGET_URI_LENGTH)
+            return ParseResult(HttpStatusCode::URI_TOO_LONG, "URI Too Long");
 
-        if (s.length() > MAX_TARGET_URI_LENGTH)
-            return ParseResult(DomainError(HttpStatusCode::URI_TOO_LONG, "URI Too Long"));
+        if (s.size() <= 0)
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Empty URI");
 
-        if (s.length() <= 0)
-            return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "No URI"));
+        // If any space exists in path
+        auto sp = s.find_first_of(" \t");
+        if (sp != strv::npos)
+            return ParseResult(HttpStatusCode::BAD_REQUEST, "Invalid URI");
 
-        auto p = s.begin();
-        ParseResult res = ParseResult();
+        // Remove fragment, if any
+        auto f = s.find('#');
+        if (f != strv::npos)
+            s = s.substr(0, f);
 
-        // If does not start with *, /, or alphabets
-        if (*p != '*' && *p != '/' && !isalpha(*p))
-            return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid URI Characters"));
-
-        // It should not have any http spaces
-        {
-            auto pn = p;
-            while (pn < s.end())
-            {
-                if (isspace(*pn))
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid URI"));
-                pn++;
-            }
-        }
-
-        // If starts with *
-        if (*p == '*')
-        {
-            if (s.length() != 1)
-                return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid URI"));
-            else
-            {
-                *_path += "/";
-                return ParseResult();
-            }
-        }
-
-        // If starts with /, will count as path starting
-        if (*p == '/')
-            res = parsePath(&p, s.end());
-
-        // If starts with some alphabet, either scheme or authority
+        // Separate parsing of query and path
+        auto q = s.find('?');
+        if (q == strv::npos)
+            return parsePath(s);
         else
         {
-            bool schemeFound = true;
-            *_absform = true;
-
-            // if scheme, then http/s
-            if (Scheme::isHttp(p, s.end()))
-                p += 7;
-            else if (Scheme::isHttps(p, s.end()))
-                p += 8;
-            else
-            {
-                schemeFound = false, *_absform = false;
-
-                // Check if :// appears
-                auto x = p;
-                while (x < s.end() && *x != ':')
-                    x++;
-                if (x < s.end() && *x == ':' && x + 2 < s.end() && *(x + 1) == '/' && *(x + 2) == '/')
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Scheme"));
-            }
-
-            // if authority given is ipv6
-            auto next = p;
-            if (*p == '[')
-            {
-                p++;
-
-                if (!AuthorityValidation::isValidIPv6(p, s.end(), &next))
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Authority"));
-                p = next;
-
-                if (*p == ']')
-                    p++;
-                else
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Authority"));
-            }
-
-            // if authority given is ipv4
-            else if (AuthorityValidation::isValidIPv4(p, s.end(), &next))
-                p = next;
-
-            // if domain name
-            else if (AuthorityValidation::isValidDomainName(p, s.end(), &next))
-                p = next;
-
-            else
-                return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Authority"));
-
-            // must be colon or /
-            if (p >= s.end() || (*p != ':' && *p != '/' && *p != '?' && *p != '#'))
-                return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Authority"));
-
-            // if port given
-            if (*p == ':')
-            {
-                p++;
-
-                next = p;
-                if (!AuthorityValidation::isValidPortNumber(p, s.end(), &next))
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Authority"));
-                p = next;
-
-                // authority form with something else
-                if (!schemeFound && p < s.end())
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Target URI"));
-
-                // path with absolute form
-                if (*p == '/' && schemeFound)
-                    res = parsePath(&p, s.end());
-                else
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Authority"));
-            }
-
-            // path starts here
-            else if (*p == '/')
-            {
-                // with absolute form
-                if (schemeFound)
-                    res = parsePath(&p, s.end());
-                else
-                    return ParseResult(DomainError(HttpStatusCode::BAD_REQUEST, "Invalid Authority"));
-            }
+            auto res = parsePath(s.substr(0, q));
+            if (!res.success)
+                return res;
+            return parseQuery(s.substr(q + 1));
         }
-
-        // If error in parsing path
-        if (!res.success)
-            return res;
-
-        // If path but nothing get means implicit root
-        if (_path->length() == 0)
-            *_path += "/";
-
-        // Parse query
-        if (p < s.end() && *p == '?')
-        {
-            p++;
-            res = parseQuery(&p, s.end());
-        }
-
-        // If error in parsing query
-        if (!res.success)
-            return res;
-
-        // dont' have to parse fragment
-
-        return ParseResult();
-    }
+    };
 };
 
 #endif
