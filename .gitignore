@@ -13,3 +13,7 @@ temp*
 # bundlers
 *.txt
 bundler.*
+
+# execs
+exec
+*.o
