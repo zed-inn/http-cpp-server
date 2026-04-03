@@ -19,10 +19,10 @@ private:
 
     static constexpr const char *PROTOCOL_LITERAL = "HTTP/1.1";
 
-    HttpStatusCode::IANAStatusCode statusCode; // response status code
-    str message;                               // small message to be put in response line
-    str payload;                               // payload to add to response
-    std::unordered_map<str, str> headers;      // headers to be sent in response
+    HttpStatusCode::IANAStatusCode statusCode;                            // response status code
+    str message;                                                          // small message to be put in response line
+    str payload;                                                          // payload to add to response
+    std::unordered_map<str, str> headers{{"Content-Type", "text/plain"}}; // default setting
 
 public:
     void setStatusCode(HttpStatusCode::IANAStatusCode sc)
@@ -48,7 +48,7 @@ public:
     {
         // Don't set headers to be set automatically for content-length, server and date
         str loweredName = tolower(key);
-        if (loweredName.compare("content-length") == 0 || loweredName.compare("server") == 0 || loweredName.compare("date"))
+        if (loweredName == "content-length" || loweredName == "server" || loweredName == "date")
             return;
 
         headers[key] = val;
@@ -68,14 +68,18 @@ public:
 
         // Set headers
         for (auto x : headers)
+        {
+            if (x.first == "Content-Type")
+                continue;
             response += x.first + ": " + x.second + "\r\n";
+        }
         response += "Date: " + httpDateNow() + "\r\n";
-        response += "Server: Localhost:8080\r\n"; // Currently hard-coded, TODO: Create environment variables
+        response += "Server: Http C++ Server\r\n"; // Currently hard-coded, TODO: Create environment variables
         if (payload.size() > 0)
         {
             // Put content length and type only when payload set
             response += "Content-Length: " + std::to_string(payload.size()) + "\r\n";
-            response += "Content-Type: " + (headers.find("Content-Type") != headers.end() ? headers["Content-Type"] : "text/plain") + "\r\n";
+            response += "Content-Type: " + headers["Content-Type"] + "\r\n";
         }
         response += "\r\n"; // end headers
 
