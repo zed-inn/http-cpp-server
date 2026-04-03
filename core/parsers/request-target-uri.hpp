@@ -167,10 +167,9 @@ public:
 
 class HttpTargetUri : Parser
 {
-private:
+public:
     typedef std::unordered_map<ConditionalStr, ConditionalStr> Query;
 
-public:
     struct URIContext
     {
         bool isPathAuthorityForm; // In context when needed for OPTIONS method
