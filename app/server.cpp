@@ -85,11 +85,8 @@ void sendstr(int sockfd, strv s)
 // Currently will only process one request and then disconnect
 void processRequest(int sockfd)
 {
-    static const size_t START_SIZE = 64;
-    static const unsigned short INCREMENT_MULTIPLIER = 2;
-
     str s;
-    s.resize(START_SIZE);
+    s.resize(16384); // fixed size
     size_t bytesRecvd, bytesFilled = 0;
 
     HttpRequest req = HttpRequest();
@@ -106,15 +103,6 @@ void processRequest(int sockfd)
             return;
         }
         bytesFilled += bytesRecvd;
-
-        // Increase size and propagate data point changes
-        if (bytesFilled >= s.size())
-        {
-            auto prev = s.data();
-            s.resize(s.size() * INCREMENT_MULTIPLIER);
-            req.propagateMemoryChange(s.data(), prev);
-        }
-
         pres = req.parse(s);
     }
 
