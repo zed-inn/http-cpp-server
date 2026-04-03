@@ -1,15 +1,18 @@
 #include <iostream>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <memory.h>
 #include <errno.h>
-#include <thread>
+#include <poll.h>
 
 // Core Http Classes
 #include "../core/ents/http-request.hpp"
 #include "../core/ents/http-response.hpp"
+
+#define INFNTIME -1
 
 using namespace std;
 
@@ -123,24 +126,166 @@ void processRequest(int sockfd)
     close(sockfd);
 }
 
+// Create pollfd
+pollfd createPfd(int fd, short events)
+{
+    return {fd : fd, events : events, revents : 0};
+}
+
+class Descriptors
+{
+private:
+    vector<pollfd> descs;
+
+    bool isFdAtIndValid(size_t i)
+    {
+        if (i > descs.size() - 1)
+            return false;
+
+        return descs[i].fd >= 0;
+    }
+
+public:
+    // To numerate over indices
+    pollfd operator[](size_t i)
+    {
+        if (i > descs.size() - 1)
+            return {fd : -1, events : 0, revents : 0};
+
+        return descs[i];
+    }
+
+    // Get the array pointer
+    pollfd *array()
+    {
+        return descs.data();
+    }
+
+    // Ignore the negative ones
+    void add(int fd, short int events)
+    {
+        descs.push_back(pollfd{fd : fd, events : events, revents : 0});
+    }
+
+    // set a fd for removal
+    // necessary to do `removeDead` afterwards
+    void setForRemoval(size_t i)
+    {
+        if (i > descs.size() - 1)
+            return; // oob
+
+        // Change the current's fd to be negative
+        descs[i].fd = ~descs[i].fd;
+    }
+
+    // Remove all the descriptor that are not going to be listened to
+    void removeDead()
+    {
+        // Gather all the dead ones at end
+        // Swap any invalid fd with the right most valid one
+        size_t l = 0, r = descs.size() - 1;
+
+        while (l < r)
+        {
+            // Find the leftmost invalid
+            while (l < r && isFdAtIndValid(l))
+                l++;
+
+            // Find the rightmost valid
+            while (r > l && !isFdAtIndValid(r))
+                r--;
+
+            // Swap and move forward
+            auto temp = descs[l];
+            descs[l] = descs[r], descs[r] = temp;
+            l++, r--;
+        }
+
+        // Get the leftmost valid
+        l = 0;
+        while (isFdAtIndValid(l))
+            l++;
+        if (l > descs.size())
+            l = descs.size() - 1;
+        else if (!isFdAtIndValid(l))
+            l--;
+
+        // Erase all afterwards
+        descs.erase(descs.begin() + l + 1, descs.end());
+    }
+
+    // Get the size of the current descriptors
+    nfds_t size()
+    {
+        return descs.size();
+    }
+};
+
 int main()
 {
     int listener;
     if (getListeningSocket(&listener) == -1)
         return 1;
 
-    // Wait and Accept connection for any new socket
+    // Create Descriptors
+    Descriptors ds = Descriptors();
+
+    // Push the listener in the descriptors
+    ds.add(listener, POLLIN); // Only listening to read
+
+    int newFd;
+    struct sockaddr_storage incomingAddr;
+    socklen_t addrSize = sizeof(incomingAddr);
+
     while (true)
     {
-        int newfd;
-        struct sockaddr_storage incoming_addr;
-        socklen_t addr_size = sizeof(incoming_addr);
+        int numEvents = poll(ds.array(), ds.size(), INFNTIME);
 
-        newfd = accept(listener, (struct sockaddr *)&incoming_addr, &addr_size);
+        // If no event happened
+        if (numEvents == 0)
+            continue;
 
-        // Process the new connection in thread
-        thread t(processRequest, newfd);
-        t.detach();
+        // Events happened
+
+        pollfd tf;
+        for (size_t i = 0; i < ds.size(); i++)
+        {
+            tf = ds[i];
+
+            // If no revents
+            if (!tf.revents)
+                continue;
+
+            // No events related to pollin or pollout happened
+            if (!(tf.revents & POLLIN || tf.events & POLLOUT))
+                continue;
+
+            // POLLIN happened on listener
+            if (tf.fd == listener)
+            {
+                // Accept Connections
+                newFd = accept(listener, (struct sockaddr *)&incomingAddr, &addrSize);
+
+                if (newFd == -1)
+                {
+                    perror("Err: newFd cannot be created\n");
+                    continue;
+                }
+
+                // Add in fds
+                ds.add(newFd, POLLIN | POLLOUT); // Worry about reading AND writing to it!
+
+                continue;
+            }
+
+            // Process Request -> Send Response -> Close socket
+            processRequest(tf.fd); // WARN: send can block if buffer is full
+
+            // Remove from the fds array
+            ds.setForRemoval(i);
+        }
+
+        ds.removeDead(); // Remove all those fds put for removal
     }
 
     close(listener);
