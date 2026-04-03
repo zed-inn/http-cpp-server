@@ -75,7 +75,7 @@ public:
         {
             // Put content length and type only when payload set
             response += "Content-Length: " + std::to_string(payload.size()) + "\r\n";
-            response += "Content-Type: " + (headers.find("Content-Type") != headers.end() ? headers["Content-Type"] : "text/plain");
+            response += "Content-Type: " + (headers.find("Content-Type") != headers.end() ? headers["Content-Type"] : "text/plain") + "\r\n";
         }
         response += "\r\n"; // end headers
 
