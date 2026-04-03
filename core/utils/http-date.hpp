@@ -13,7 +13,7 @@ str httpDateNow()
     std::tm gmt;
     gmtime_r(&t, &gmt);
 
-    char buf[30];
+    char buf[31];
     std::snprintf(buf, sizeof(buf), "%s, %02d %s %04d %02d:%02d:%02d GMT",
                   wkday[gmt.tm_wday],
                   gmt.tm_mday,
