@@ -17,6 +17,9 @@ to unexpected results. It is therefore not recommended.
 */
 class HttpRequest : Parser
 {
+public:
+    static constexpr size_t MAX_REQUEST_SIZE = 16384;
+
 private:
     typedef unsigned char Task;
 
