@@ -75,37 +75,12 @@ public:
     // Remove all the descriptor that are not going to be listened to
     void removeDead()
     {
-        // Gather all the dead ones at end
-        // Swap any invalid fd with the right most valid one
-        size_t l = 0, r = descs.size() - 1;
-
-        while (l < r)
-        {
-            // Find the leftmost invalid
-            while (l < r && isFdAtIndValid(l))
-                l++;
-
-            // Find the rightmost valid
-            while (r > l && !isFdAtIndValid(r))
-                r--;
-
-            // Swap and move forward
-            auto temp = descs[l];
-            descs[l] = descs[r], descs[r] = temp;
-            l++, r--;
-        }
-
-        // Get the leftmost valid
-        l = 0;
-        while (isFdAtIndValid(l))
-            l++;
-        if (l > descs.size())
-            l = descs.size() - 1;
-        else if (!isFdAtIndValid(l))
-            l--;
-
-        // Erase all afterwards
-        descs.erase(descs.begin() + l + 1, descs.end());
+        descs.erase(
+            std::remove_if(descs.begin(),
+                           descs.end(),
+                           [](const pollfd &p)
+                           { return p.fd < 0; }),
+            descs.end());
     }
 
     // Get the size of the current descriptors
