@@ -127,7 +127,7 @@ private:
     static inline Socket getListener(Servinfo *sv, Error *e)
     {
         int status;                            // error collection
-        int fd;                                // listener socket file descriptor
+        Socket fd;                             // listener socket file descriptor
         struct addrinfo hints, *p, *saddrinfo; // addrinfo structs
         saddrinfo = p = nullptr;               // dangling pointers
 
@@ -194,26 +194,14 @@ private:
         return fd;
     }
 
-    static inline void sendStr(Socket fd, strv s)
-    {
-        size_t totalSent = 0, currSent;
-        while (totalSent < s.size())
-        {
-            if ((currSent = send(fd, s.begin(), s.size(), 0)) == (long unsigned)-1)
-            {
-                fprintf(stderr, "Err: %s\n", strerror(errno));
-                return;
-            }
-            totalSent += currSent;
-        }
-    }
-
     struct ConnectionState
     {
         string buffer;
         size_t recvd = 0;
+        size_t sent = 0;
         HttpRequest req;
         HttpResponse res;
+        string responseData;
 
         ConnectionState()
         {
@@ -227,12 +215,69 @@ private:
     Servinfo svri;
     RouteMap rm;
 
-    void processRequest(Socket fd)
+    int processResponse(Socket fd)
     {
-
         // Check if invalid fd
         if (fd < 0)
-            return;
+            return -1;
+
+        ConnectionState *cs;
+        auto cit = activeConns.find(fd);
+        if (cit == activeConns.end())
+            return 0; // Necessary to have a state already
+        else
+            cs = &(cit->second);
+
+        // Request must be completed in order to send response
+        if (!cs->req.completed())
+            return 0;
+
+        // Send the response data
+        int n;
+        while (cs->sent < cs->responseData.size())
+        {
+            n = send(fd, cs->responseData.data() + cs->sent, cs->responseData.size() - cs->sent, 0);
+            if (n > 0)
+            {
+                cs->sent += n;
+                continue;
+            }
+
+            if (n == 0)
+            {
+                close(fd);
+                activeConns.erase(fd);
+                return -1;
+            }
+
+            if (n == -1)
+            {
+                if (errno == EINTR)
+                    continue;
+                else if (errno == EWOULDBLOCK || errno == EAGAIN)
+                    return 0;
+                else
+                {
+                    close(fd);
+                    activeConns.erase(fd);
+                    return -1;
+                }
+            }
+        }
+
+        if (cs->sent < cs->responseData.size())
+            return 0;
+
+        close(fd);
+        activeConns.erase(fd);
+        return 0;
+    }
+
+    int processRequest(Socket fd)
+    {
+        // Check if invalid fd
+        if (fd < 0)
+            return -1;
 
         // Get the connection state, if not create one
         ConnectionState *cs;
@@ -242,16 +287,20 @@ private:
         else
             cs = &(cit->second);
 
+        // No more parsing after already done
+        if (cs->req.completed())
+            return 0;
+
         ParseResult pr;
 
         // Parse the recieved body
-        int n, prev;
+        int n;
         while (!cs->req.completed())
         {
             n = recv(fd, cs->buffer.data() + cs->recvd, cs->buffer.size() - cs->recvd, 0);
             if (n > 0)
             {
-                pr = cs->req.parse(string_view(cs->buffer.data() + cs->recvd, cs->buffer.size() - cs->recvd));
+                pr = cs->req.parse(string_view(cs->buffer.data() + cs->recvd, n));
                 cs->recvd += n;
 
                 continue;
@@ -261,7 +310,7 @@ private:
             {
                 close(fd);
                 activeConns.erase(fd);
-                return;
+                return -1;
             }
 
             if (n == -1)
@@ -269,9 +318,13 @@ private:
                 if (errno == EINTR)
                     continue;
                 if (errno == EWOULDBLOCK || errno == EAGAIN)
-                    return;
+                    return 0;
                 else
-                    return;
+                {
+                    close(fd);
+                    activeConns.erase(fd);
+                    return -1;
+                }
             }
         }
 
@@ -282,10 +335,8 @@ private:
                 cs->res.setReponseLineMesssage("Internval Server Error");
             else
                 cs->res.setReponseLineMesssage(pr.error.reason);
-            sendStr(fd, cs->res.createResponse());
-            close(fd);
-            activeConns.erase(fd);
-            return;
+            cs->responseData = cs->res.createResponse();
+            return 0;
         }
 
         // Search for paths
@@ -307,9 +358,8 @@ private:
         else
             it->second(&cs->req, &cs->res);
 
-        sendStr(fd, cs->res.createResponse());
-        close(fd);
-        activeConns.erase(fd);
+        cs->responseData = cs->res.createResponse();
+        return 0;
     }
 
 public:
@@ -332,8 +382,8 @@ public:
         // Push the main listener fd
         ds.add(listener, POLLIN); // only for listening
 
-        int numEvents;
-        int newFd;                                        // Client's fd
+        int numEvents, err;
+        Socket newFd;                                     // Client's fd
         struct sockaddr_storage incomingAddr;             // Incoming addr
         socklen_t incomingAddrLen = sizeof(incomingAddr); // Size of incoming addr
         while (true)
@@ -351,7 +401,7 @@ public:
                     continue;
 
                 // Skip any with not POLLIN
-                if (!(ds[i].revents & POLLIN))
+                if (!((ds[i].revents & POLLIN) || (ds[i].revents & POLLOUT)))
                     continue;
 
                 // Listener with POLLIN
@@ -369,7 +419,7 @@ public:
                     }
                     fcntl(newFd, F_SETFL, O_NONBLOCK); // Make the sockets non-blocking
 
-                    ds.add(newFd, POLLIN); // Only checking if ready to read
+                    ds.add(newFd, POLLIN | POLLOUT); // Only checking if ready to read
                     continue;
                 }
 
@@ -377,9 +427,19 @@ public:
 
                 // Handles only one request CURRENTLY
                 // Process request ->  Create response -> Send Response -> Close socket
-                processRequest(ds[i].fd);
 
-                ds.setForRemoval(i);
+                if (ds[i].revents & POLLIN)
+                {
+                    err = processRequest(ds[i].fd);
+                    if (err)
+                        ds.setForRemoval(i);
+                }
+                else if (ds[i].revents & POLLOUT)
+                {
+                    err = processResponse(ds[i].fd);
+                    if (err)
+                        ds.setForRemoval(i);
+                }
             }
 
             ds.removeDead();
