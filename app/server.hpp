@@ -7,6 +7,7 @@
 #include <poll.h>
 #include <string>
 #include <unistd.h>
+#include <fcntl.h>
 
 // Core Http Classes
 #include "../core/ents/http-request.hpp"
@@ -207,50 +208,89 @@ private:
         }
     }
 
+    struct ConnectionState
+    {
+        string buffer;
+        size_t recvd = 0;
+        HttpRequest req;
+        HttpResponse res;
+
+        ConnectionState()
+        {
+            buffer.resize(HttpRequest::MAX_REQUEST_SIZE);
+        }
+    };
+
+    unordered_map<Socket, ConnectionState> activeConns;
+
     Socket listener;
     Servinfo svri;
     RouteMap rm;
 
     void processRequest(Socket fd)
     {
+
+        // Check if invalid fd
         if (fd < 0)
             return;
 
-        string s;
-        s.resize(HttpRequest::MAX_REQUEST_SIZE);
-        int recvd = 0;
+        // Get the connection state, if not create one
+        ConnectionState *cs;
+        auto cit = activeConns.find(fd);
+        if (cit == activeConns.end())
+            activeConns[fd] = ConnectionState(), cs = &(activeConns[fd]);
+        else
+            cs = &(cit->second);
 
-        HttpRequest req = HttpRequest();
-        HttpResponse res = HttpResponse();
         ParseResult pr;
 
-        while (!req.completed())
+        // Parse the recieved body
+        int n, prev;
+        while (!cs->req.completed())
         {
-            int n = recv(fd, s.data() + recvd, s.size() - recvd, 0);
-            if (n <= 0)
+            n = recv(fd, cs->buffer.data() + cs->recvd, cs->buffer.size() - cs->recvd, 0);
+            if (n > 0)
+            {
+                pr = cs->req.parse(string_view(cs->buffer.data() + cs->recvd, cs->buffer.size() - cs->recvd));
+                cs->recvd += n;
+
+                continue;
+            }
+
+            if (n == 0)
             {
                 close(fd);
+                activeConns.erase(fd);
                 return;
             }
-            recvd += n;
-            pr = req.parse(s);
+
+            if (n == -1)
+            {
+                if (errno == EINTR)
+                    continue;
+                if (errno == EWOULDBLOCK || errno == EAGAIN)
+                    return;
+                else
+                    return;
+            }
         }
 
         if (!pr.success)
         {
-            res.setStatusCode(pr.error.code);
+            cs->res.setStatusCode(pr.error.code);
             if (pr.error.code == HttpStatusCode::INTERNAL_SERVER_ERROR)
-                res.setReponseLineMesssage("Internval Server Error");
+                cs->res.setReponseLineMesssage("Internval Server Error");
             else
-                res.setReponseLineMesssage(pr.error.reason);
-            sendStr(fd, res.createResponse());
+                cs->res.setReponseLineMesssage(pr.error.reason);
+            sendStr(fd, cs->res.createResponse());
             close(fd);
+            activeConns.erase(fd);
             return;
         }
 
         // Search for paths
         RouteMap::iterator it;
-        auto path = req.path();
+        auto path = cs->req.path();
         if (auto p = get_if<string>(&path))
             it = rm.find(*p);
         else if (auto p = get_if<string_view>(&path))
@@ -259,16 +299,17 @@ private:
         // No route like that
         if (it == rm.end())
         {
-            res.setStatusCode(HttpStatusCode::NOT_FOUND);
-            res.setReponseLineMesssage("Not Found");
-            res.addBody("No path found like that");
+            cs->res.setStatusCode(HttpStatusCode::NOT_FOUND);
+            cs->res.setReponseLineMesssage("Not Found");
+            cs->res.addBody("No path found like that");
         }
         // Run the function to update response
         else
-            it->second(&req, &res);
+            it->second(&cs->req, &cs->res);
 
-        sendStr(fd, res.createResponse());
+        sendStr(fd, cs->res.createResponse());
         close(fd);
+        activeConns.erase(fd);
     }
 
 public:
@@ -281,6 +322,9 @@ public:
         listener = getListener(&svri, &e);
         if (listener == INVALID_SOCKET)
             return e;
+
+        // make non blocking listener
+        fcntl(listener, F_SETFL, O_NONBLOCK);
 
         // list of descriptors
         Descriptors ds;
@@ -323,6 +367,7 @@ public:
                         e.reason = strerror(errno);
                         continue;
                     }
+                    fcntl(newFd, F_SETFL, O_NONBLOCK); // Make the sockets non-blocking
 
                     ds.add(newFd, POLLIN); // Only checking if ready to read
                     continue;
