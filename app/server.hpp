@@ -119,7 +119,7 @@ private:
     typedef unordered_map<string, Router> RouteMap;
     typedef int Socket; // socket as is given by socket()
 
-    static constexpr unsigned short BACKLOG = 10; // 10 backlog is fine
+    static constexpr unsigned short BACKLOG = 1024;
 
     static constexpr Socket INVALID_SOCKET = -1;
 
@@ -418,6 +418,9 @@ public:
                         continue;
                     }
                     fcntl(newFd, F_SETFL, O_NONBLOCK); // Make the sockets non-blocking
+
+                    int flag = 1;
+                    setsockopt(newFd, IPPROTO_TCP, O_NDELAY, &flag, sizeof(flag)); // TCP NO DELAY
 
                     ds.add(newFd, POLLIN | POLLOUT); // Only checking if ready to read
                     continue;
